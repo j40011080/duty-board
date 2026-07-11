@@ -60,6 +60,14 @@
   .clock .date{ display:block; font-size:.75rem; color:var(--dim2); font-weight:400; text-align:right;}
 
   .toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  /* 手機：匯入按鈕維持原本在 board-head 下方獨立一整排的排法 */
+  .board-head .toolbar{ order:5; flex:1 0 100%; margin:8px 0 0; }
+  /* 電腦版（寬度 >=700px）：匯入按鈕移到目前時間（時鐘）左側，留一點空間 */
+  @media (min-width:700px){
+    .board-head > div:first-child{ order:1; flex:1 1 auto; min-width:0; }
+    .board-head .toolbar{ order:2; flex:0 0 auto; margin:0 16px 0 0; }
+    .clock{ order:3; }
+  }
   .btn{
     background: var(--panel-2); border:1px solid #ffffff1c; color:var(--text);
     padding:8px 14px; border-radius:8px; font-size:.82rem; cursor:pointer;
@@ -130,7 +138,7 @@
       justify-content:center;
     }
   }
-  .now-range{ font-family:'Chivo Mono',monospace; font-size:clamp(1.3rem,3.5vw,1.8rem); font-weight:900; margin-bottom:10px;}
+  .now-range{ font-family:'Chivo Mono',monospace; font-size:clamp(1.1rem,3vw,1.6rem); font-weight:900; }
 
   .cars-grid{ display:grid; grid-template-columns: 1fr; gap:12px; }
   @media (min-width:700px){
@@ -321,12 +329,11 @@
     <h1 id="unitTitle">雲林縣消防局第三大隊北港分隊</h1>
     <div class="sub" id="unitSub">10人共同勤務分配表 ・ <span class="date-highlight">民國115年7月8日 星期三</span> ・ 當日主管：小隊長 張文吉<span class="check-date">（核對日期）</span></div>
   </div>
+  <div class="toolbar edit-only">
+    <button class="btn primary" id="importBtn">📥 匯入 Excel 勤務表</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls">
+  </div>
   <div class="clock" id="clockTime">--:--<span class="date" id="clockDate">----</span></div>
-</div>
-
-<div class="toolbar edit-only">
-  <button class="btn primary" id="importBtn">📥 匯入 Excel 勤務表</button>
-  <input type="file" id="fileInput" accept=".xlsx,.xls">
 </div>
 
 <div class="now-panel" id="nowPanel"></div>
@@ -1056,9 +1063,9 @@ function renderNow(){
   panel.innerHTML = `
     <div class="now-head">
       <span class="tag">現在時段 NOW</span>
+      <span class="now-range">${g.label}</span>
       ${dutyPersonHtml(g.onduty, {label:'值班人員'})}
     </div>
-    <div class="now-range">${g.label}</div>
     ${renderPeopleBlock(g)}
   `;
   document.querySelectorAll('.hour-card').forEach((el,i)=>{
