@@ -591,7 +591,12 @@ function applyRemoteState(state){
   if(state.names) names = state.names;
   if(state.titles) titles = state.titles;
   if(state.schedule) schedule = state.schedule;
-  if(state.otherDuty) otherDuty = state.otherDuty;
+  // 用 state.otherDuty || [] 而不是 if(state.otherDuty) 判斷：
+  // Firebase 資料庫沒辦法真的存「空陣列」，欄位一旦被設成 []，整個欄位
+  // 會直接從資料庫消失（讀回來變 undefined）。如果用 if(state.otherDuty)
+  // 判斷，遇到「清空」這個狀態就會被誤判成「雲端沒給值、不用更新」，導致
+  // 其他裝置永遠卡在舊資料（甚至是頁面裡寫死的示範資料）。
+  otherDuty = state.otherDuty || [];
   tempOut = state.tempOut || [];
   dispatchOut = state.dispatchOut || [];
   dispatchBatchSeq = state.dispatchBatchSeq || 0;
@@ -599,7 +604,9 @@ function applyRemoteState(state){
   if(state.supervisorNum !== undefined) supervisorNum = state.supervisorNum;
   if(state.rosterNums !== undefined) rosterNums = state.rosterNums;
   if(state.importedDateStr) importedDateStr = state.importedDateStr;
-  if(state.roomNumbers){ roomNumbers = state.roomNumbers; saveRoomNumbers(); }
+  // 跟 otherDuty 同樣的道理，不用 if 判斷是否有值，永遠直接套用。
+  roomNumbers = state.roomNumbers || {};
+  saveRoomNumbers();
   if(state.unitTitle) document.getElementById('unitTitle').textContent = state.unitTitle;
   if(state.unitSub) document.getElementById('unitSub').innerHTML = state.unitSub;
 
