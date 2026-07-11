@@ -60,8 +60,10 @@
   .clock .date{ display:block; font-size:.75rem; color:var(--dim2); font-weight:400; text-align:right;}
 
   .toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
-  /* 手機：匯入按鈕維持原本在 board-head 下方獨立一整排的排法 */
-  .board-head .toolbar{ order:5; flex:1 0 100%; margin:8px 0 0; }
+  /* 手機：標題獨立一整排，時鐘與匯入按鈕同一排（時鐘在左、按鈕在右） */
+  .board-head > div:first-child{ order:1; flex:1 0 100%; }
+  .clock{ order:2; flex:0 1 auto; }
+  .board-head .toolbar{ order:3; flex:0 0 auto; margin:0; }
   /* 電腦版（寬度 >=700px）：匯入按鈕移到目前時間（時鐘）左側，留一點空間 */
   @media (min-width:700px){
     .board-head > div:first-child{ order:1; flex:1 1 auto; min-width:0; }
@@ -132,10 +134,10 @@
      文字偏移貼近左邊，改成正常排版方式——NOW 標籤在上，值班人員置中排在
      下面一行，不再用絕對定位。 */
   @media (max-width:699px){
-    .now-head{ flex-direction:column; align-items:center; text-align:center; }
+    .now-head{ flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:baseline; text-align:center; row-gap:4px; margin-bottom:6px; }
     .now-head .duty-person{
       position:static; transform:none; max-width:100%; width:100%;
-      justify-content:center;
+      justify-content:center; flex-basis:100%;
     }
   }
   .now-range{ font-family:'Chivo Mono',monospace; font-size:clamp(1.1rem,3vw,1.6rem); font-weight:900; }
