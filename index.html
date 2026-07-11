@@ -479,7 +479,12 @@ function saveRoomNumbers(){ localStorage.setItem('roomNumbers', JSON.stringify(r
 // 頁面複製出來的那一段設定，即可啟用雲端同步；沒換之前，本頁仍可單機使用
 // （只是不會跨裝置同步，畫面上方會顯示「⚪ 尚未設定雲端同步」）。
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
+  apiKey: "AIzaSyCb2NOW0w7j7LV-AU8DLu5rIgHRVzemUuY",
+  authDomain: "beigang0711.firebaseapp.com",
+  projectId: "beigang0711",
+  storageBucket: "beigang0711.firebasestorage.app",
+  messagingSenderId: "153837580992",
+  appId: "1:153837580992:web:e0e1123ceb510f0578f325"
 };
 // 解鎖編輯用的共用密碼，可自行修改。
 const EDIT_PIN = "7832200";
