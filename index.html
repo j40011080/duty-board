@@ -222,8 +222,7 @@
   .modal-actions{ display:flex; gap:10px; justify-content:flex-end; }
 
   /* 右上角設定按鈕 */
-  .settings-fab{ position:fixed; top:12px; right:12px; display:flex; gap:8px; z-index:80; }
-  .settings-fab button{
+  .settings-fab{ position:fixed; top:12px; right:12px; display:flex; gap:8px; z-index:80; }  .settings-fab button{
     background: var(--panel-2); border:1px solid #ffffff30; color:var(--text);
     width:42px; height:42px; border-radius:50%; font-size:1.15rem; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
@@ -275,6 +274,25 @@
   .lock-fab .btn{ font-size:.8rem; padding:8px 12px; box-shadow:0 4px 14px #00000066; }
   .lock-fab .btn.unlocked{ border-color: var(--green); color: var(--green); }
   #syncIndicator{ font-size:.7rem; color:var(--dim2); background:var(--panel-2); border:1px solid #ffffff1c; padding:4px 8px; border-radius:6px; }
+
+  /* 出勤／返隊 手機提醒（頁面內橫幅），不需要通知權限也一定看得到；
+     另外若使用者有開啟系統通知權限，會同時跳出手機的系統通知。 */
+  #toastStack{
+    position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    z-index:200; display:flex; flex-direction:column; gap:8px;
+    width:min(92vw,480px); pointer-events:none;
+  }
+  .toast{
+    background: var(--panel-2); border:1px solid #ffffff28; border-left:6px solid var(--amber);
+    border-radius:10px; padding:12px 16px; box-shadow:0 8px 24px #000000aa;
+    font-size:.95rem; line-height:1.5; animation: toastIn .25s ease-out;
+  }
+  .toast.out{ border-left-color: var(--away); }
+  .toast.back{ border-left-color: var(--green); }
+  .toast .toast-title{ font-weight:900; margin-bottom:2px; }
+  .toast.fading{ animation: toastOut .3s ease-in forwards; }
+  @keyframes toastIn{ from{ opacity:0; transform:translateY(-12px); } to{ opacity:1; transform:translateY(0); } }
+  @keyframes toastOut{ from{ opacity:1; } to{ opacity:0; transform:translateY(-8px); } }
   body.locked .edit-only{ display:none !important; }
   .readonly-hint{ display:none; font-size:.78rem; color:var(--dim2); margin:-6px 0 16px; }
   body.locked .readonly-hint{ display:block; }
@@ -285,6 +303,7 @@
 </style>
 </head>
 <body class="locked">
+<div id="toastStack"></div>
 <div class="lock-fab">
   <button type="button" id="lockToggleBtn" class="btn" title="解鎖編輯">🔒 解鎖編輯</button>
   <span id="syncIndicator">⚪ 尚未設定雲端同步</span>
@@ -391,6 +410,8 @@
     <label class="toggle-row">
       <input type="checkbox" id="toggleFullSchedule"> 顯示「全日班表」區塊（點擊展開任一時段）
     </label>
+    <button type="button" class="btn" id="notifyPermBtn" style="margin-bottom:18px;">🔔 開啟出勤／返隊 手機通知</button>
+    <div id="notifyPermStatus" style="font-size:.8rem; color:var(--dim2); margin:-12px 0 18px;"></div>
     <div class="modal-actions">
       <button type="button" class="btn primary" id="funcModalClose">完成</button>
     </div>
@@ -524,7 +545,7 @@ function collectState(){
   return {
     names, titles, schedule, otherDuty,
     tempOut, dispatchOut, dispatchBatchSeq, substitutions,
-    supervisorNum, rosterNums, importedDateStr,
+    supervisorNum, rosterNums, importedDateStr, roomNumbers,
     unitTitle: document.getElementById('unitTitle').textContent,
     unitSub: document.getElementById('unitSub').innerHTML,
     updatedAt: Date.now()
@@ -538,6 +559,16 @@ function syncToCloud(){
     const state = JSON.parse(JSON.stringify(collectState()));
     db.ref('boardState').set(state);
   }catch(e){ console.error('雲端同步失敗', e); }
+}
+
+// 房號連動設定：跟「解鎖編輯」是不同的功能，任何裝置（唯讀也可以）都能設定
+// 房號並同步給其他裝置，所以這裡不檢查 unlocked，只單獨更新 roomNumbers
+// 這個節點，不會動到其他勤務資料。
+function syncRoomNumbersToCloud(){
+  if(!cloudEnabled || !db) return;
+  try{
+    db.ref('boardState/roomNumbers').set(roomNumbers);
+  }catch(e){ console.error('房號同步失敗', e); }
 }
 
 // 收到雲端資料（不論是別人更新，或自己剛剛寫入後的回音）時，套用到畫面。
@@ -554,6 +585,7 @@ function applyRemoteState(state){
   if(state.supervisorNum !== undefined) supervisorNum = state.supervisorNum;
   if(state.rosterNums !== undefined) rosterNums = state.rosterNums;
   if(state.importedDateStr) importedDateStr = state.importedDateStr;
+  if(state.roomNumbers){ roomNumbers = state.roomNumbers; saveRoomNumbers(); }
   if(state.unitTitle) document.getElementById('unitTitle').textContent = state.unitTitle;
   if(state.unitSub) document.getElementById('unitSub').innerHTML = state.unitSub;
   renderAll();
@@ -1094,6 +1126,7 @@ function renderDispatchOut(){
       dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
       renderAll();
       syncToCloud();
+      notifyReturn([n]);
     });
   });
   // Return an entire batch (everyone who went out together) at once.
@@ -1107,6 +1140,7 @@ function renderDispatchOut(){
         dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
         renderAll();
         syncToCloud();
+        notifyReturn(entries.map(e=>e.num), label);
       }
     });
   });
@@ -1131,6 +1165,67 @@ function showAlert(msg){
 }
 function showConfirm(msg){
   return new Promise(resolve=> openModal(msg, true, resolve));
+}
+
+// ================= 出勤／返隊 通知提醒 =================
+// 頁面內橫幅一定會顯示（不需要任何權限）；如果使用者另外按過「開啟出勤／
+// 返隊 手機通知」並同意權限，會再額外跳出手機系統通知（鎖屏或切到別的
+// App 時也看得到），兩者同時觸發、互不取代。
+function showToast(title, body, kind){
+  const stack = document.getElementById('toastStack');
+  if(!stack) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.innerHTML = `<div class="toast-title">${esc(title)}</div><div>${esc(body)}</div>`;
+  stack.appendChild(el);
+  setTimeout(()=>{
+    el.classList.add('fading');
+    setTimeout(()=> el.remove(), 320);
+  }, 4200);
+}
+
+function requestNotifyPermission(){
+  if(!('Notification' in window)){
+    document.getElementById('notifyPermStatus').textContent = '此瀏覽器不支援手機系統通知，僅能看到頁面內的提醒橫幅。';
+    return;
+  }
+  Notification.requestPermission().then(perm=>{
+    const el = document.getElementById('notifyPermStatus');
+    if(perm === 'granted') el.textContent = '✅ 已開啟，出勤／返隊時會跳出手機通知。';
+    else el.textContent = '尚未開啟（瀏覽器權限被拒絕，可到手機設定裡的網站權限重新開啟）。';
+  });
+}
+function notifyPermStatusText(){
+  if(!('Notification' in window)) return '此瀏覽器不支援手機系統通知，僅能看到頁面內的提醒橫幅。';
+  if(Notification.permission === 'granted') return '✅ 已開啟，出勤／返隊時會跳出手機通知。';
+  if(Notification.permission === 'denied') return '尚未開啟（瀏覽器權限被拒絕，可到手機設定裡的網站權限重新開啟）。';
+  return '';
+}
+
+// 系統通知：優先透過已註冊的 Service Worker 發送（手機鎖屏、切到背景時也叫得出來），
+// 沒有 Service Worker 時退回用一般 Notification()。沒有開啟權限時就只顯示頁面橫幅。
+function pushSystemNotification(title, body){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  const opts = { body, icon: './icon.svg', badge: './icon.svg' };
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistration().then(reg=>{
+      if(reg) reg.showNotification(title, opts);
+      else new Notification(title, opts);
+    }).catch(()=>{ try{ new Notification(title, opts); }catch(e){} });
+  } else {
+    try{ new Notification(title, opts); }catch(e){}
+  }
+}
+function notifyDispatch(entries, type){
+  const label = presetLabels[type] || '出勤';
+  const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
+  showToast(`🚨 已登記出勤・${label}`, names_, 'out');
+  pushSystemNotification(`出勤登記・${label}`, names_);
+}
+function notifyReturn(entries, label){
+  const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
+  showToast(`🔄 已返隊${label ? '・' + label : ''}`, names_, 'back');
+  pushSystemNotification(`返隊${label ? '・' + label : ''}`, names_);
 }
 function openModal(msg, isConfirm, resolve){
   const overlay = document.getElementById('modalOverlay');
@@ -1250,13 +1345,16 @@ async function confirmDispatch(){
   const checks = document.querySelectorAll('#dispatchCheckboxes input[type=checkbox]:checked');
   if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
   const batchId = ++dispatchBatchSeq; // everyone confirmed together shares one batch, so they can return together later
+  const confirmedNums = [];
   checks.forEach(cb=>{
     const n = Number(cb.value);
     if(!dispatchOut.some(d=>d.num===n)) dispatchOut.push({num:n, type, batchId});
+    confirmedNums.push(n);
   });
   closeDispatchPicker();
   renderAll();
   syncToCloud();
+  notifyDispatch(confirmedNums, type);
 }
 
 // ================= EXCEL IMPORT =================
@@ -1575,6 +1673,7 @@ function parseScheduleAOA(aoa){
 // ================= SETTINGS（右上角兩個按鈕） =================
 document.getElementById('funcSettingsBtn').addEventListener('click', ()=>{
   document.getElementById('toggleFullSchedule').checked = showFullSchedule;
+  document.getElementById('notifyPermStatus').textContent = notifyPermStatusText();
   document.getElementById('funcModalOverlay').style.display = 'flex';
 });
 document.getElementById('funcModalClose').addEventListener('click', ()=>{
@@ -1583,6 +1682,7 @@ document.getElementById('funcModalClose').addEventListener('click', ()=>{
   applyFullScheduleVisibility();
   document.getElementById('funcModalOverlay').style.display = 'none';
 });
+document.getElementById('notifyPermBtn').addEventListener('click', requestNotifyPermission);
 
 document.getElementById('linkSettingsBtn').addEventListener('click', openRoomModal);
 document.getElementById('roomModalCancel').addEventListener('click', ()=>{
@@ -1595,6 +1695,7 @@ document.getElementById('roomModalSave').addEventListener('click', ()=>{
     if(v) roomNumbers[n] = v; else delete roomNumbers[n];
   });
   saveRoomNumbers();
+  syncRoomNumbersToCloud();
   document.getElementById('roomModalOverlay').style.display = 'none';
   renderAll();
 });
