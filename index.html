@@ -250,12 +250,15 @@
     padding:2px 9px; border-radius:6px; font-size:.8em; font-weight:500;
   }
 
-  /* 放大第一/第二順位、備勤人員的番號姓名字級 */
-  .chip.big{ padding:16px 22px; font-size:2.1rem; }
-  .chip.big .num{ font-size:1.7rem; }
-  .chip.big .car-tag, .chip.big .room-tag{ font-size:.55em; }
-  .chip{ font-size:1.55rem; padding:9px 16px; }
-  .chip .num{ font-size:1.35rem; }
+  /* 放大字級只在桌面／大螢幕生效，手機螢幕維持原本較緊湊的字級，
+     避免手機上要一直往下滑才看得到備勤人員順序。 */
+  @media (min-width:700px){
+    .chip.big{ padding:16px 22px; font-size:2.1rem; }
+    .chip.big .num{ font-size:1.7rem; }
+    .chip.big .car-tag, .chip.big .room-tag{ font-size:.55em; }
+    .chip{ font-size:1.55rem; padding:9px 16px; }
+    .chip .num{ font-size:1.35rem; }
+  }
 
   /* 雲端同步／解鎖編輯 */
   .lock-fab{ position:fixed; top:12px; left:12px; z-index:80; display:flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:70vw; }
