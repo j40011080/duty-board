@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>北港分隊 勤務看板</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#2563eb">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="勤務看板">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Chivo+Mono:wght@400;600;900&display=swap');
+
+  :root{
+    --bg: #17181c;
+    --panel: #1f2127;
+    --panel-2: #262933;
+    --amber: #ffb020;
+    --amber-dim: #ffb02066;
+    --red: #e13a2e;
+    --blue: #3d8bfd;
+    --text: #f1f1f2;
+    --dim: #b7bac4;
+    --dim2: #ccd0da;
+    --green: #3ecf6a;
+    --conscript: #38d9c4;
+    --supervisor: #c792ea;
+    --crew: #ffd43b;
+    --away: #ff8787;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 15% 0%, #2a1414 0%, transparent 45%),
+      repeating-linear-gradient(0deg, #0000 0px, #0000 39px, #ffffff05 40px);
+    color: var(--text);
+    font-family: 'Noto Sans TC', sans-serif;
+    min-height:100vh;
+    padding: 18px 6px 60px;
+  }
+  .wrap{ max-width: min(1900px, 92vw); margin: 0 auto; }
+
+  .board-head{
+    display:flex; justify-content:space-between; align-items:flex-end;
+    border-bottom: 3px solid var(--red);
+    padding-bottom:10px; margin-bottom:16px; margin-top:46px;
+    flex-wrap:wrap; gap:8px;
+  }
+  .board-head h1{ font-size: clamp(1rem,2.4vw,1.3rem); font-weight:900; margin:0; letter-spacing:.5px;}
+  .board-head .sub{ color:var(--dim2); font-size:.82rem; margin-top:2px;}
+  .clock{ font-family:'Chivo Mono', monospace; font-size: clamp(1.8rem,5vw,2.6rem); font-weight:700; color:var(--amber); text-shadow: 0 0 14px var(--amber-dim); letter-spacing:1px; line-height:1.1;}
+  .clock .date{ display:block; font-size:.75rem; color:var(--dim2); font-weight:400; text-align:right;}
+
+  .toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  .btn{
+    background: var(--panel-2); border:1px solid #ffffff1c; color:var(--text);
+    padding:8px 14px; border-radius:8px; font-size:.82rem; cursor:pointer;
+    font-family:inherit;
+  }
+  .btn:hover{ background:#2f333e; }
+  .btn.primary{ border-color: var(--amber); color: var(--amber); }
+  #fileInput{ display:none; }
+
+  .panel-box{
+    background: var(--panel); border:1px solid #ffffff14;
+    border-radius:10px; padding:12px 16px; margin-bottom:20px;
+  }
+  .panel-box.tempout{ border-left:6px solid var(--red); }
+  .panel-box.subst{ border-left:6px solid var(--blue); }
+  .panel-box h3{ margin:0 0 8px; font-size:.85rem; color:var(--dim2); font-weight:700; letter-spacing:1px;}
+  .inrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  .inrow input{
+    background:#00000055; border:1px solid #ffffff28; color:var(--text);
+    padding:7px 10px; border-radius:6px; width:110px; font-family:'Chivo Mono',monospace;
+  }
+  .inrow span.arrow{ color: var(--dim2); }
+  .tag-chip{
+    border-radius:8px; padding:5px 10px; font-size:.85rem; display:flex; gap:8px; align-items:center;
+  }
+  .tag-chip.out{ background:#3a1414; border:1px solid var(--red); }
+  .tag-chip.sub{ background:#132238; border:1px solid var(--blue); }
+  .tag-chip button{ background:none; border:none; cursor:pointer; font-weight:900; font-size:.9rem; }
+  .tag-chip.out button{ color: var(--red); }
+  .tag-chip.sub button{ color: var(--blue); }
+
+  .out-mark{ color: var(--red); font-weight:900; margin-left:3px; }
+
+  .panel-box.dispatch{ border-left:6px solid var(--away); }
+  .dispatch-presets{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .dispatch-picker{
+    background:#00000033; border:1px solid #ffffff1c; border-radius:8px;
+    padding:10px; margin-bottom:10px;
+  }
+  .dispatch-checkboxes{
+    display:flex; flex-wrap:wrap; gap:6px 14px; max-height:220px; overflow-y:auto;
+    margin-bottom:10px; font-size:.88rem;
+  }
+  .dispatch-check{ display:flex; align-items:center; gap:5px; cursor:pointer; }
+  .dispatch-check input{ cursor:pointer; }
+  .btn.return-all{ border-color: var(--red); color: var(--red); }
+  .btn.ghost{ background:transparent; }
+
+  .now-panel{
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid #ffffff12; border-left: 6px solid var(--amber);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 22px;
+    box-shadow: 0 8px 30px #00000055;
+  }
+  .now-panel .tag{
+    display:inline-block; font-size:.7rem; letter-spacing:2px; color:var(--bg);
+    background: var(--amber); font-weight:900; padding:2px 8px; border-radius:4px;
+  }
+  .now-head{ position:relative; display:flex; justify-content:flex-start; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px; min-height:32px; }
+  .now-head .duty-person{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); max-width:min(80%,420px); justify-content:center; text-align:center; }
+  .now-range{ font-family:'Chivo Mono',monospace; font-size:clamp(1.3rem,3.5vw,1.8rem); font-weight:900; margin-bottom:10px;}
+
+  .cars-grid{ display:grid; grid-template-columns: 1fr; gap:12px; }
+  @media (min-width:700px){
+    .cars-grid{ grid-template-columns: 1fr 1fr 1.4fr; }
+  }
+  .col{ background:#00000030; border:1px solid #ffffff10; border-radius:8px; padding:10px 12px; }
+  .col-label{ font-size:.75rem; color:var(--dim2); letter-spacing:1px; margin-bottom:6px; display:flex; gap:6px; align-items:center;}
+  .col-label .dot{ width:8px; height:8px; border-radius:50%; display:inline-block;}
+  .car1 .dot{ background: var(--red);}
+  .car2 .dot{ background: var(--blue);}
+  .standby .dot{ background: var(--dim2);}
+
+  .people{ display:flex; flex-wrap:wrap; gap:8px; }
+  .chip{
+    background:#00000055; border:1px solid #ffffff1c; border-radius:8px;
+    padding:6px 10px; font-size:.94rem; display:flex; gap:6px; align-items:baseline;
+  }
+  .chip .num{ font-family:'Chivo Mono',monospace; color:var(--amber); font-weight:700; font-size:.86rem;}
+  .chip .ord{ color:var(--dim2); font-size:.72rem; }
+  .chip.empty{ color:var(--dim2); font-style:italic; border-style:dashed;}
+  .chip .name.conscript{ color: var(--conscript); font-weight:700; }
+  .chip .name.supervisor{ color: var(--supervisor); font-weight:700; }
+  .chip .name.crew{ color: var(--crew); }
+  .chip .name.away{ color: var(--away); }
+  .chip.big{ padding:8px 13px; font-size:1.08rem; }
+  .chip.big .num{ font-size:1rem; }
+  .duty-person .name.conscript{ color: var(--conscript); font-weight:700; }
+  .duty-person .name.supervisor{ color: var(--supervisor); font-weight:700; }
+  .duty-person{ font-size:.95rem; color: var(--text); display:inline-flex; align-items:baseline; gap:4px; flex-wrap:wrap; }
+  .duty-person .duty-label{ }
+  .duty-person b{ color:var(--amber); font-weight:700; font-family:'Chivo Mono',monospace; }
+  .supervisor-line .duty-label{ color: var(--green); font-weight:900; }
+  .now-head .duty-person{ font-size:clamp(1.2rem,3.2vw,1.6rem); font-weight:700; }
+  .standby .duty-person.supervisor-line{
+    display:flex; margin-top:12px; padding-top:10px; border-top:1px dashed #ffffff26; font-size:clamp(1.05rem,2.6vw,1.3rem);
+  }
+  .htop .flag .duty-person{ font-size:.72rem; color:var(--amber); letter-spacing:.5px; }
+  .htop .flag .duty-person b{ color:var(--amber); }
+  .htop .flag .duty-person .room-tag{ font-size:1em; }
+  .other-duty{ margin-top:10px; font-size:.87rem; color: var(--dim2); }
+  .other-duty .people{ margin-top:4px; }
+  .note{ margin-top:10px; font-size:.82rem; color:var(--dim2); line-height:1.6;}
+
+  .list-head{ font-size:.85rem; color:var(--dim2); margin: 26px 0 8px; letter-spacing:1px;}
+  .hour-card{
+    background: var(--panel); border:1px solid #ffffff10; border-radius:8px;
+    padding:10px 14px; margin-bottom:8px; cursor:pointer; transition: background .15s;
+  }
+  .hour-card:hover{ background:#25272f; }
+  .hour-card.active{ border-color: var(--amber); background: #2a2416; }
+  .hour-card .htop{ display:flex; justify-content:space-between; align-items:center; font-family:'Chivo Mono',monospace; font-weight:700; font-size:.95rem;}
+  .hour-card .htop .flag{ font-size:.72rem; color:var(--amber); letter-spacing:1px;}
+  .hour-card .hbody{ margin-top:10px; display:none; }
+  .hour-card.expanded .hbody{ display:block; }
+
+  footer{ text-align:center; color:#7d808c; font-size:.72rem; margin-top:30px;}
+  .importmsg{ font-size:.8rem; margin-top:8px; }
+  .importmsg.ok{ color: var(--green); }
+  .importmsg.err{ color: var(--red); }
+
+  .sub .date-highlight{ font-size:1.12em; font-weight:900; color:var(--dim2); letter-spacing:.5px; }
+  .sub .check-date{ color: var(--red); font-weight:900; font-size:1.15em; margin-left:6px; }
+
+  .dispatch-out-list{ margin-top:10px; }
+  .dispatch-out-list .people{ margin-top:6px; }
+  .dispatch-batch{
+    background:#00000030; border:1px solid #ffffff14; border-radius:8px;
+    padding:8px 10px; margin-bottom:8px;
+  }
+  .dispatch-batch-head{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:.85rem; color:var(--dim2); gap:8px; flex-wrap:wrap;
+  }
+  .dispatch-batch-head .label{ color:var(--text); font-weight:700; }
+  .btn.return-batch{ border-color: var(--away); color: var(--away); padding:5px 10px; font-size:.78rem; }
+  .tag-chip.dispatch{ background:#3a1414; border:1px solid var(--away); }
+  .tag-chip.dispatch button{ color: var(--away); }
+  .dispatch-type-icon{ margin-right:2px; }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:#000000a0; z-index:999;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-box{
+    background: var(--panel-2); border:1px solid #ffffff28; border-radius:12px;
+    padding:20px; max-width:360px; width:100%; box-shadow:0 12px 40px #000000aa;
+  }
+  .modal-msg{ font-size:.95rem; line-height:1.6; margin-bottom:16px; white-space:pre-line; }
+  .modal-actions{ display:flex; gap:10px; justify-content:flex-end; }
+
+  /* 右上角設定按鈕 */
+  .settings-fab{ position:fixed; top:12px; right:12px; display:flex; gap:8px; z-index:80; }
+  .settings-fab button{
+    background: var(--panel-2); border:1px solid #ffffff30; color:var(--text);
+    width:42px; height:42px; border-radius:50%; font-size:1.15rem; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px #00000066;
+  }
+  .settings-fab button:hover{ background:#2f333e; }
+  .room-list-row{ display:flex; align-items:center; gap:10px; }
+  .room-list-row .who{ width:96px; flex-shrink:0; font-size:.9rem; color:var(--dim2); }
+  .room-list-row input{
+    background:#00000055; border:1px solid #ffffff28; color:var(--text);
+    padding:7px 10px; border-radius:6px; width:110px; font-family:inherit;
+  }
+  .toggle-row{ display:flex; align-items:center; gap:10px; font-size:.95rem; margin-bottom:18px; cursor:pointer; }
+  .toggle-row input{ width:18px; height:18px; cursor:pointer; }
+
+  /* 日期核對閃爍提示 */
+  .check-date.blink-warn{
+    animation: blinkWarn .8s steps(2,start) infinite;
+    background: var(--red); color:#fff; padding:2px 10px; border-radius:5px; margin-left:8px;
+  }
+  @keyframes blinkWarn{ 50%{ opacity:.15; } }
+
+  /* 車輛／房號 標籤，跟在番號姓名下方 */
+  .chip{ display:inline-flex; flex-direction:column; align-items:flex-start; gap:3px; }
+  .chip-row1{ display:flex; gap:6px; align-items:baseline; }
+  .chip.empty{ flex-direction:row; align-items:center; }
+  .chip-meta{ display:flex; gap:6px; flex-wrap:wrap; }
+  .car-tag{
+    background: var(--red); color:#fff; font-weight:900; padding:4px 15px;
+    border-radius:6px; font-size:.95em; letter-spacing:1px;
+  }
+  .room-tag{
+    background:#20304a; border:1px solid #3a527a; color:#8fa8cc;
+    padding:2px 9px; border-radius:6px; font-size:.8em; font-weight:500;
+  }
+
+  /* 放大第一/第二順位、備勤人員的番號姓名字級 */
+  .chip.big{ padding:16px 22px; font-size:2.1rem; }
+  .chip.big .num{ font-size:1.7rem; }
+  .chip.big .car-tag, .chip.big .room-tag{ font-size:.55em; }
+  .chip{ font-size:1.28rem; padding:8px 14px; }
+  .chip .num{ font-size:1.12rem; }
+
+  /* 雲端同步／解鎖編輯 */
+  .lock-fab{ position:fixed; top:12px; left:12px; z-index:80; display:flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:70vw; }
+  .lock-fab .btn{ font-size:.8rem; padding:8px 12px; box-shadow:0 4px 14px #00000066; }
+  .lock-fab .btn.unlocked{ border-color: var(--green); color: var(--green); }
+  #syncIndicator{ font-size:.7rem; color:var(--dim2); background:var(--panel-2); border:1px solid #ffffff1c; padding:4px 8px; border-radius:6px; }
+  body.locked .edit-only{ display:none !important; }
+  .readonly-hint{ display:none; font-size:.78rem; color:var(--dim2); margin:-6px 0 16px; }
+  body.locked .readonly-hint{ display:block; }
+  #pinInput{
+    width:100%; background:#00000055; border:1px solid #ffffff28; color:var(--text);
+    padding:9px 10px; border-radius:6px; font-family:'Chivo Mono',monospace; font-size:1.1rem; margin-bottom:14px;
+  }
+</style>
+</head>
+<body class="locked">
+<div class="lock-fab">
+  <button type="button" id="lockToggleBtn" class="btn" title="解鎖編輯">🔒 解鎖編輯</button>
+  <span id="syncIndicator">⚪ 尚未設定雲端同步</span>
+</div>
+<div class="settings-fab">
+  <button type="button" id="funcSettingsBtn" title="功能設定">⚙️</button>
+  <button type="button" id="linkSettingsBtn" title="連動設定・房號">🔗</button>
+</div>
+<div class="wrap">
+
+<div class="readonly-hint">🔒 目前為唯讀模式，僅顯示最新勤務狀況。如需匯入、標記外出／代班／出勤，請點左上角「解鎖編輯」輸入密碼。</div>
+
+<div class="board-head">
+  <div>
+    <h1 id="unitTitle">雲林縣消防局第三大隊北港分隊</h1>
+    <div class="sub" id="unitSub">10人共同勤務分配表 ・ <span class="date-highlight">民國115年7月8日 星期三</span> ・ 當日主管：小隊長 張文吉<span class="check-date">（核對日期）</span></div>
+  </div>
+  <div class="clock" id="clockTime">--:--<span class="date" id="clockDate">----</span></div>
+</div>
+
+<div class="toolbar edit-only">
+  <button class="btn primary" id="importBtn">📥 匯入 Excel 勤務表</button>
+  <input type="file" id="fileInput" accept=".xlsx,.xls">
+</div>
+
+<div class="now-panel" id="nowPanel"></div>
+
+<div class="panel-box tempout">
+  <h3>暫時外出登記（勾選人員，只在名字後方標記❌，不會移除、不影響原本順位）</h3>
+  <button type="button" class="btn ghost edit-only" id="tempOutPickBtn">👤 選擇人員</button>
+  <div id="tempOutPicker" class="dispatch-picker" style="display:none;">
+    <div id="tempOutCheckboxes" class="dispatch-checkboxes"></div>
+    <div class="inrow">
+      <button type="button" class="btn primary" id="tempOutConfirm">✓ 確定外出</button>
+      <button type="button" class="btn" id="tempOutCancel">取消</button>
+    </div>
+  </div>
+  <div class="people" id="tempOutList"></div>
+</div>
+
+<div class="panel-box dispatch">
+  <h3>快速出勤登記（勾選出勤人員一次標記❌；名單只列今日上班人員，出勤登記後可依批次一起返隊）</h3>
+  <div class="dispatch-presets edit-only">
+    <button type="button" class="btn ghost" data-type="ems">🚑 救護（通常2-3人）</button>
+    <button type="button" class="btn ghost" data-type="fire">🔥 火警（通常2人）</button>
+    <button type="button" class="btn ghost" data-type="other">🚨 其他（通常2-3人）</button>
+  </div>
+  <div id="dispatchPicker" class="dispatch-picker" style="display:none;">
+    <div id="dispatchCheckboxes" class="dispatch-checkboxes"></div>
+    <div class="inrow">
+      <button type="button" class="btn primary" id="dispatchConfirm">✓ 確定出勤</button>
+      <button type="button" class="btn" id="dispatchCancel">取消</button>
+    </div>
+  </div>
+  <div class="dispatch-out-list">
+    <h3 style="margin-top:10px;">目前出勤中（依批次分組，整批或個別返隊）</h3>
+    <div id="dispatchOutList"></div>
+  </div>
+</div>
+
+<div class="panel-box subst">
+  <h3>代班登記（輸入「代班人番號」與「被代班人番號」，兩人順位將互換）</h3>
+  <div class="inrow edit-only">
+    <input type="text" id="subFromInput" placeholder="代班人番號" inputmode="numeric">
+    <span class="arrow">代替 →</span>
+    <input type="text" id="subToInput" placeholder="被代班人番號" inputmode="numeric">
+    <button class="btn" id="subAdd">＋ 加入</button>
+  </div>
+  <div class="people" id="subList"></div>
+</div>
+
+<div id="importMsg" class="importmsg"></div>
+
+<div class="list-head">▾ 全日班表（點擊展開任一時段）</div>
+<div id="listWrap"></div>
+
+<footer>資料依系統推算之叫班順序整理，如遇人員異動請以主管核章之異動欄或匯入之正式 Excel 為準。</footer>
+</div>
+
+<div class="modal-overlay" id="modalOverlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-msg" id="modalMsg"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="modalCancel">取消</button>
+      <button type="button" class="btn primary" id="modalOk">確定</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="pinModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-msg" style="margin-bottom:10px; font-weight:700;">輸入編輯密碼</div>
+    <input type="password" id="pinInput" inputmode="numeric" placeholder="密碼">
+    <div class="modal-actions">
+      <button type="button" class="btn" id="pinModalCancel">取消</button>
+      <button type="button" class="btn primary" id="pinModalOk">解鎖</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="funcModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-msg" style="margin-bottom:14px; font-weight:700;">功能設定</div>
+    <label class="toggle-row">
+      <input type="checkbox" id="toggleFullSchedule"> 顯示「全日班表」區塊（點擊展開任一時段）
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn primary" id="funcModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="roomModalOverlay" style="display:none;">
+  <div class="modal-box" style="max-width:420px;">
+    <div class="modal-msg" style="margin-bottom:14px; font-weight:700;">連動設定・房間號碼對應<br><span style="font-weight:400; font-size:.8rem; color:var(--dim2);">設定後會顯示在主畫面番號姓名下方</span></div>
+    <div id="roomInputsWrap" style="max-height:50vh; overflow-y:auto; display:flex; flex-direction:column; gap:8px; margin-bottom:16px;"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="roomModalCancel">取消</button>
+      <button type="button" class="btn primary" id="roomModalSave">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ================= DEFAULT DATA =================
+const defaultNames = {
+  1:"陳思淵",2:"蘇建維",3:"張文吉",5:"林懿穎",6:"王俊鴻",7:"江育忠",8:"侯又正",
+  9:"蔡明坤",10:"黃榮宗",11:"陳育棠",12:"蘇蓮宗",13:"蔡壹淵",14:"劉建成",15:"李家豪",
+  16:"張雅倫",17:"蔡健鴻",18:"江昌林",19:"陳建溢",20:"黃續雄",21:"吳佳穎",22:"蘇俊彥",
+  23:"陳政彥",24:"黃鐘慶",25:"黃國睿",81:"吳岳哲",82:"周聖杰",83:"黃聖元"
+};
+const defaultTitles = {1:"分隊長",2:"小隊長",3:"小隊長",81:"役男",82:"役男",83:"役男"};
+
+// individual daytime hours (8-9 through 21-22), 14 slots
+const defaultSchedule = [
+ {s:8, e:9,  onduty:81, pos:{1:6,2:23,3:9,4:25,5:8,6:14}},
+ {s:9, e:10, onduty:81, pos:{1:25,2:14,3:23,4:6,5:8,6:9}},
+ {s:10,e:11, onduty:81, pos:{1:9,2:8,3:25,4:14,5:6,6:23}},
+ {s:11,e:12, onduty:81, pos:{1:14,2:6,3:8,4:23,5:9,6:25}},
+ {s:12,e:13, onduty:83, pos:{1:8,2:25,3:6,4:9,5:5,6:14,7:23}},
+ {s:13,e:14, onduty:83, pos:{1:23,2:9,3:5,4:8,5:6,6:14,7:25}},
+ {s:14,e:15, onduty:83, inspect:14, pos:{1:6,2:5,3:23,4:25,5:8,6:9}, note:"消防查察(14-16)：番號14，責任區5，5甲1.2暑期青春專案檢查；5丁2器"},
+ {s:15,e:16, onduty:81, inspect:14, pos:{1:25,2:23,3:9,4:6,5:5,6:8}},
+ {s:16,e:17, onduty:81, training:"救護訓練", pos:{1:5,2:6,3:25,4:9,5:14,6:23}, note:"救護訓練暨役男民防訓練(16-18)：靜脈(IV)注射技術操作，教官張文吉，值班台"},
+ {s:17,e:18, onduty:81, training:"救護訓練", pos:{1:9,2:14,3:23,4:5,5:6,6:8,7:25}},
+ {s:18,e:19, onduty:83, pos:{1:23,2:25,3:6,4:8,5:5,6:9,7:14}},
+ {s:19,e:20, onduty:83, pos:{1:8,2:6,3:14,4:9,5:5,6:23,7:25}},
+ {s:20,e:21, onduty:83, pos:{1:5,2:9,3:25,4:23,5:6,6:8,7:14}},
+ {s:21,e:22, onduty:83, pos:{1:14,2:8,3:5,4:6,5:9,6:23,7:25}},
+ {s:22,e:23, onduty:25, pos:{1:23,2:9,5:5,6:6,7:8,8:14}, note:"番號82 輪休外宿"},
+ {s:23,e:24, onduty:25, pos:{1:23,2:9,5:5,6:6,7:8,8:14}},
+ {s:0, e:1,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:1, e:2,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:2, e:3,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:3, e:4,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:4, e:5,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:5, e:6,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:6, e:7,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+ {s:7, e:8,  onduty:25, pos:{1:6,2:5,5:8,6:9,7:14,8:23}},
+];
+const defaultOtherDuty = [
+  {persons:[1,5],  start:8,  end:12, label:"北港鎮公所HSEEP講習"},
+  {persons:[17,18],start:8,  end:18, label:"TECC訓練"},
+  {persons:[8,83], start:16, end:17, label:"危險水域防溺宣導巡邏（女兒橋、觀光大橋、164滯洪池）"}
+];
+const DRIVER_NUMS = new Set([81,82,83]); // 值班駕駛，不列入車輛叫班順位
+
+// The unit always keeps one fixed person on a supervisor/rest slot who appears
+// in literally every hourly row of the sheet (番號3 in the default sample day).
+// Detect that person from the data itself (rather than hardcoding "3") so an
+// imported day with a different supervisor still works correctly.
+function detectSupervisorNum(sched){
+  const counts = {};
+  for(const row of sched){
+    const seen = new Set(Object.values(row.pos));
+    seen.forEach(v=>{ if(!DRIVER_NUMS.has(v)) counts[v] = (counts[v]||0)+1; });
+  }
+  let best=null, bestCount=0;
+  for(const [v,c] of Object.entries(counts)){
+    if(c>bestCount){ bestCount=c; best=Number(v); }
+  }
+  return (sched.length && bestCount >= sched.length*0.7) ? best : 3;
+}
+
+// ================= LIVE STATE =================
+let names = {...defaultNames};
+let titles = {...defaultTitles};
+let schedule = defaultSchedule.map(r=>({...r, pos:{...r.pos}}));
+let otherDuty = defaultOtherDuty.map(g=>({...g}));
+let tempOut = [];       // numbers manually entered via 暫時外出登記 (individually removable)
+let dispatchOut = [];   // [{num, type, batchId}] numbers checked off via 快速出勤登記, grouped by which confirm click added them
+let dispatchBatchSeq = 0; // increments once per confirmDispatch() call, so a batch of 2-3 people checked off together can later return together
+let substitutions = []; // [{from:X, to:Y}] X substitutes for Y (ranks swapped)
+let supervisorNum = detectSupervisorNum(schedule);
+let rosterNums = null; // today's full "今日上班番號" list, if the sheet states one explicitly
+let importedDateStr = ''; // set to the "民國X年X月X日" string parsed from the last imported file; '' = still on demo data
+
+// 房間號碼對應（連動設定），存在瀏覽器本機（每台裝置各自設定，不會互相同步）
+let roomNumbers = {};
+try{ roomNumbers = JSON.parse(localStorage.getItem('roomNumbers') || '{}'); }catch(e){ roomNumbers = {}; }
+function saveRoomNumbers(){ localStorage.setItem('roomNumbers', JSON.stringify(roomNumbers)); }
+
+// ================= 雲端同步（Firebase Realtime Database） =================
+// 把下面 firebaseConfig 的 { ... } 整段換成你自己 Firebase 專案「網頁應用程式」
+// 頁面複製出來的那一段設定，即可啟用雲端同步；沒換之前，本頁仍可單機使用
+// （只是不會跨裝置同步，畫面上方會顯示「⚪ 尚未設定雲端同步」）。
+const firebaseConfig = {
+  apiKey: "PASTE_YOUR_API_KEY_HERE",
+};
+// 解鎖編輯用的共用密碼，可自行修改。
+const EDIT_PIN = "7832200";
+
+let unlocked = false;      // 預設唯讀；輸入正確密碼後才能匯入／標記
+let cloudEnabled = false;  // firebaseConfig 是否已經換成真正的設定
+let db = null;
+
+function updateSyncIndicator(connected){
+  const el = document.getElementById('syncIndicator');
+  if(!el) return;
+  if(!cloudEnabled){ el.textContent = '⚪ 尚未設定雲端同步'; return; }
+  if(connected){
+    const t = new Date().toLocaleTimeString('zh-TW', {hour12:false});
+    el.textContent = `🟢 已連線同步・最後更新：${t}`;
+  } else {
+    el.textContent = '🔴 未連線';
+  }
+}
+
+// 把目前畫面上會用到的所有共用資料打包成一個物件，寫進雲端。
+function collectState(){
+  return {
+    names, titles, schedule, otherDuty,
+    tempOut, dispatchOut, dispatchBatchSeq, substitutions,
+    supervisorNum, rosterNums, importedDateStr,
+    unitTitle: document.getElementById('unitTitle').textContent,
+    unitSub: document.getElementById('unitSub').innerHTML,
+    updatedAt: Date.now()
+  };
+}
+
+// 只有「已解鎖編輯」的裝置才會把本機變動寫回雲端，避免唯讀裝置互相覆蓋。
+function syncToCloud(){
+  if(!cloudEnabled || !db || !unlocked) return;
+  try{
+    const state = JSON.parse(JSON.stringify(collectState()));
+    db.ref('boardState').set(state);
+  }catch(e){ console.error('雲端同步失敗', e); }
+}
+
+// 收到雲端資料（不論是別人更新，或自己剛剛寫入後的回音）時，套用到畫面。
+function applyRemoteState(state){
+  if(!state) return;
+  if(state.names) names = state.names;
+  if(state.titles) titles = state.titles;
+  if(state.schedule) schedule = state.schedule;
+  if(state.otherDuty) otherDuty = state.otherDuty;
+  tempOut = state.tempOut || [];
+  dispatchOut = state.dispatchOut || [];
+  dispatchBatchSeq = state.dispatchBatchSeq || 0;
+  substitutions = state.substitutions || [];
+  if(state.supervisorNum !== undefined) supervisorNum = state.supervisorNum;
+  if(state.rosterNums !== undefined) rosterNums = state.rosterNums;
+  if(state.importedDateStr) importedDateStr = state.importedDateStr;
+  if(state.unitTitle) document.getElementById('unitTitle').textContent = state.unitTitle;
+  if(state.unitSub) document.getElementById('unitSub').innerHTML = state.unitSub;
+  renderAll();
+}
+
+function initFirebase(){
+  const notConfigured = !firebaseConfig.apiKey || firebaseConfig.apiKey.indexOf('PASTE_YOUR') === 0;
+  if(notConfigured){ updateSyncIndicator(false); return; }
+  try{
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    cloudEnabled = true;
+    db.ref('.info/connected').on('value', snap=>{ updateSyncIndicator(snap.val() === true); });
+    db.ref('boardState').on('value', snap=>{ applyRemoteState(snap.val()); });
+  }catch(e){
+    console.error('Firebase 初始化失敗', e);
+    cloudEnabled = false;
+    updateSyncIndicator(false);
+  }
+}
+
+// ================= 解鎖編輯（左上角🔒） =================
+function setUnlocked(val){
+  unlocked = val;
+  document.body.classList.toggle('locked', !unlocked);
+  const btn = document.getElementById('lockToggleBtn');
+  btn.textContent = unlocked ? '🔓 鎖定（改回唯讀）' : '🔒 解鎖編輯';
+  btn.classList.toggle('unlocked', unlocked);
+}
+document.getElementById('lockToggleBtn').addEventListener('click', ()=>{
+  if(unlocked){ setUnlocked(false); return; }
+  document.getElementById('pinInput').value = '';
+  document.getElementById('pinModalOverlay').style.display = 'flex';
+  setTimeout(()=>document.getElementById('pinInput').focus(), 50);
+});
+document.getElementById('pinModalCancel').addEventListener('click', ()=>{
+  document.getElementById('pinModalOverlay').style.display = 'none';
+});
+document.getElementById('pinModalOk').addEventListener('click', tryUnlock);
+document.getElementById('pinInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') tryUnlock(); });
+async function tryUnlock(){
+  const val = document.getElementById('pinInput').value;
+  document.getElementById('pinModalOverlay').style.display = 'none';
+  if(val === EDIT_PIN){ setUnlocked(true); }
+  else{ await showAlert('密碼錯誤，請再試一次。'); }
+}
+
+// 是否顯示「全日班表」區塊（功能設定）
+let showFullSchedule = localStorage.getItem('showFullSchedule') !== '0';
+function applyFullScheduleVisibility(){
+  const head = document.querySelector('.list-head');
+  const wrap = document.getElementById('listWrap');
+  if(head) head.style.display = showFullSchedule ? '' : 'none';
+  if(wrap) wrap.style.display = showFullSchedule ? '' : 'none';
+}
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 順位 1～7 對應的車輛／崗位標籤。遇到外出或已出勤的人（❌）與 80 番以後的
+// 役男會被跳過，標籤自動往後遞補給下一位「在隊」人員；人數不夠時該標籤就
+// 不會出現在任何人身上（等同顯示空白），不會強行湊人。
+const CAR_LABELS = ['11車','62車','瞄子手','瞄子手','91車','71車','31車'];
+function buildCarMap(list){
+  const eligible = list.filter(n => n!==undefined && n!==null && !isConscript(n) && !isMarkedOut(n));
+  const map = {};
+  CAR_LABELS.forEach((label,i)=>{ if(eligible[i]!==undefined) map[eligible[i]] = label; });
+  return map;
+}
+
+// A person shows the ❌ mark on their chip if they're out via EITHER route —
+// manually entered (tempOut) or checked off through quick dispatch (dispatchOut).
+function isMarkedOut(n){
+  return tempOut.includes(n) || dispatchOut.some(d=>d.num===n);
+}
+
+// "今日上班番號": prefer the explicit roster line from the imported sheet; if
+// that's not available (e.g. still on the demo data), fall back to every
+// number that actually appears anywhere in today's schedule grid (positions
+// 1-14 + 休息時間 + 值班), which is exactly the same underlying set.
+function getTodayRosterNums(){
+  if(rosterNums && rosterNums.length) return rosterNums;
+  const set = new Set();
+  schedule.forEach(row=>{
+    if(row.onduty!==undefined) set.add(row.onduty);
+    Object.values(row.pos||{}).forEach(v=>set.add(v));
+  });
+  return [...set];
+}
+
+function P(n){ return { num:n, name:names[n]||"?", title:titles[n]||"隊員" }; }
+
+// ================= ROTATION: build the flat call-up order for each block =================
+// The 24 raw hourly rows are first collapsed into 16 display "blocks": the 14
+// individual daytime hours (08-09 .. 21-22), one merged block for 22:00-00:00
+// (which repeats every hour) and one merged block for 00:00-08:00 (which also
+// repeats every hour). This mirrors how the unit actually reads the sheet and
+// avoids re-counting the same duplicated hour twice.
+//
+// For each block: car1=(1,2), car2=(3,4) if both are present on that block's
+// own row; otherwise car2 is found by walking backward block-by-block until a
+// fully-fresh (1,2) pair turns up. The standby (備勤) call-up order then
+// continues scanning further blocks, always in full (1,2,3,4,5,...) order,
+// skipping anyone already used — starting from the block right before wherever
+// car2 came from (this is what makes the overnight blocks resolve correctly).
+// The on-duty driver and the day's supervisor (番號3) never appear in standby.
+function buildBlocks(){
+  const blocks = [];
+  for(let i=0;i<14 && i<schedule.length;i++){
+    blocks.push({
+      label: fmtRange(schedule[i].s, schedule[i].e), hourStart: schedule[i].s,
+      onduty: schedule[i].onduty, inspect: schedule[i].inspect,
+      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList,
+      training: schedule[i].training, note: schedule[i].note, pos: schedule[i].pos,
+      matches: h => h === schedule[i].s
+    });
+  }
+  if(schedule.length >= 16){
+    blocks.push({
+      label:"22:00–00:00", hourStart:22, onduty:schedule[14].onduty,
+      inspectList: schedule[14].inspectList, waterList: schedule[14].waterList, otherList: schedule[14].otherList,
+      note:schedule[14].note, pos: mergeRowPositions([schedule[14], schedule[15]]),
+      matches: h => h===22 || h===23
+    });
+  }
+  if(schedule.length >= 24){
+    blocks.push({
+      label:"00:00–08:00", hourStart:0, onduty:schedule[16].onduty,
+      pos: mergeRowPositions(schedule.slice(16,24)),
+      inspectList: schedule[16].inspectList, waterList: schedule[16].waterList, otherList: schedule[16].otherList,
+      matches: h => h>=0 && h<=7
+    });
+  }
+  return blocks;
+}
+
+// A merged overnight block (22:00-00:00 or 00:00-08:00) actually spans several
+// hourly rows in the source sheet, and later hours sometimes list a slightly
+// fuller/updated call-up order than the first hour of the block (e.g. an extra
+// standby slot appears from the 2nd hour onward). Reading only the first row
+// (as before) silently dropped anyone who only appeared in a later hour's row.
+// This merges every constituent row's (1)-(14) columns, letting later hours
+// override a given slot number if they define it, while keeping a slot's value
+// from an earlier hour when a later hour simply leaves that slot blank.
+function mergeRowPositions(rows){
+  return rows.reduce((acc,row)=> Object.assign(acc, row && row.pos), {});
+}
+
+// "Can this person be slotted into car1/car2 right now": not already placed
+// elsewhere this hour, not today's supervisor, and not a dedicated driver
+// (81/82/83 only drive — the source sheet never assigns them into the (1)-(4)
+// car-crew columns, so they're excluded here specifically).
+function isEligibleCar(v, used){
+  return v!==undefined && v!==null && !DRIVER_NUMS.has(v) && v!==supervisorNum && !used.has(v);
+}
+
+// "Can this person be slotted into standby (備勤) right now": not already
+// placed elsewhere this hour, not today's supervisor. Unlike car-crew slots,
+// standby DOES include 81/82/83 whenever they aren't this hour's on-duty
+// driver — the sheet itself lists them in the (5)-(14) 備勤 columns on the
+// hours they aren't driving, so excluding them here caused them to silently
+// vanish from standby (this was the "missing 81/83" bug).
+function isEligibleStandby(v, used){
+  return v!==undefined && v!==null && v!==supervisorNum && !used.has(v);
+}
+
+function rowFullSeq(block, used){
+  const keys = Object.keys(block.pos).map(Number).sort((a,b)=>a-b);
+  const out = [];
+  for(const k of keys){
+    const v = block.pos[k];
+    if(!isEligibleStandby(v, used)) continue;
+    used.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function findCar2(blocks, idx, used){
+  const cur = blocks[idx];
+  if(cur.pos[3]!==undefined && cur.pos[4]!==undefined){
+    const v3=cur.pos[3], v4=cur.pos[4];
+    if(isEligibleCar(v3, used) && isEligibleCar(v4, used)){
+      return { pair:[v3,v4], sourceIdx: idx };
+    }
+  }
+  for(let back=1; back<=idx; back++){
+    const p = blocks[idx-back];
+    if(p.pos[1]!==undefined && p.pos[2]!==undefined){
+      const v1=p.pos[1], v2=p.pos[2];
+      if(isEligibleCar(v1, used) && isEligibleCar(v2, used)){
+        return { pair:[v1,v2], sourceIdx: idx-back };
+      }
+    }
+  }
+  return { pair:[], sourceIdx: idx };
+}
+
+// Pass 1: figure out car1/car2 (and this hour's "away" exclusions) for every
+// block first, independent of standby, so the standby pass (which needs to
+// look at *other* hours' car1/car2) always has that data ready regardless of
+// which order blocks are processed in.
+function computeCarsCache(blocks){
+  return blocks.map((cur, idx)=>{
+    const used = new Set();
+    if(cur.onduty !== undefined) used.add(cur.onduty);
+    // Anyone out on 消防查察／水源查察／其他勤務 this hour is not in the station,
+    // so they must never also show up as car1/car2/standby for that hour.
+    const inspectNums = (cur.inspectList && cur.inspectList.length) ? cur.inspectList
+      : (cur.inspect!==undefined ? [cur.inspect] : []);
+    inspectNums.forEach(v=>used.add(v));
+    (cur.waterList||[]).forEach(v=>used.add(v));
+    (cur.otherList||[]).forEach(v=>used.add(v));
+    activeOtherDuty(cur.hourStart).forEach(g=> g.persons.forEach(v=>used.add(v)));
+
+    const car1 = [cur.pos[1], cur.pos[2]].filter(v=>isEligibleCar(v, used));
+    car1.forEach(v=>used.add(v));
+    const car2Result = findCar2(blocks, idx, used);
+    const car2 = car2Result.pair;
+    car2.forEach(v=>used.add(v));
+    return { car1, car2, used };
+  });
+}
+
+function buildFlatForBlock(blocks, idx, carsCache){
+  const cur = blocks[idx];
+  const cache = carsCache[idx];
+  const used = new Set(cache.used);
+  const car1 = cache.car1;
+  const car2 = cache.car2;
+
+  // 分隊實際的排班習慣：本時段的備勤順序＝上一個時段的第一台車＋第二台車人員
+  // （依序），如果那個人這個時段已經被用掉了（重複），就再往更早的時段遞補，
+  // 以此類推。只有一天的第一個時段（08-09，沒有「上一個時段」可以參考）直接
+  // 讀取自己那一列的順位欄位。
+  let standby = [];
+  if(idx === 0){
+    standby = rowFullSeq(cur, used);
+  } else {
+    for(let back=1; back<=idx; back++){
+      const prev = carsCache[idx-back];
+      const seq = [...prev.car1, ...prev.car2];
+      for(const v of seq){
+        if(!isEligibleStandby(v, used)) continue;
+        used.add(v);
+        standby.push(v);
+      }
+    }
+    // Final check: this hour's own row, from 備勤(5) all the way through the
+    // 休息時間 column (that column is folded into cur.pos under the REST_KEY
+    // slot during parsing, so it's included automatically here since it sorts
+    // after position 14). Anyone listed anywhere in that range who hasn't
+    // already been placed gets pulled in — this replaces the old "compare
+    // against the whole day's 今日上班番號 roster" safety net, since someone
+    // can be on today's roster line but actually supporting another unit (not
+    // physically present this hour), in which case they won't appear anywhere
+    // in this row's own position(5)-休息時間 range and rightly won't be added.
+    standby = standby.concat(rowFullSeq(cur, used));
+  }
+
+  return [...car1, ...car2, ...standby];
+}
+
+function getDisplayGroups(){
+  const blocks = buildBlocks();
+  const carsCache = computeCarsCache(blocks);
+  return blocks.map((b,i)=>({
+    label: b.label, hourStart: b.hourStart, onduty: b.onduty,
+    inspect: b.inspect, inspectList: b.inspectList, waterList: b.waterList, otherList: b.otherList,
+    training: b.training, note: b.note,
+    flat: buildFlatForBlock(blocks, i, carsCache),
+    matches: b.matches
+  }));
+}
+
+function fmtRange(s,e){
+  const f = h => (h%24).toString().padStart(2,'0');
+  return f(s)+":00–"+f(e===24?0:e)+":00";
+}
+
+// apply substitutions (rank swap) then temp-out removal, on a flat ordered list
+function applyOverrides(flat){
+  let list = flat.slice();
+  substitutions.forEach(({from, to})=>{
+    const iTo = list.indexOf(to);
+    const iFrom = list.indexOf(from);
+    if(iTo === -1) return; // nothing to substitute here
+    if(iFrom === -1){
+      list[iTo] = from; // simple replace: substitute steps into the slot
+    } else {
+      // true swap of rank positions
+      const tmp = list[iTo];
+      list[iTo] = list[iFrom];
+      list[iFrom] = tmp;
+    }
+  });
+  // 出勤標記（tempOut）不再從名單移除或造成後面順位遞補，只在 chip() 裡加上❌
+  // 標記，人員仍留在原本的位置／順位上。
+  return list;
+}
+
+function activeOtherDuty(hourStart){
+  return otherDuty.filter(g => hourStart>=g.start && hourStart<g.end);
+}
+
+// ================= RENDER HELPERS =================
+// 80以後的番號是役男（駕駛），排在備勤最後面且不編出勤順序號碼；名字另外變色。
+function isConscript(n){
+  return n!==undefined && n!==null && Number(n) > 80;
+}
+// 暫時外出登記（手動輸入）維持紅色❌；快速出勤登記則改顯示該案件類型的圖示
+// （🚑救護／🔥火警／🚨其他），方便一眼看出人是為了什麼原因不在隊上。
+// Shared by chip() and the 值班人員／當日主管 duty-line so a supervisor who
+// steps out gets the same marking as anyone else.
+function outMarkHtml(n){
+  const dispatchEntry = dispatchOut.find(d=>d.num===n);
+  if(dispatchEntry) return `<span class="out-mark">${presetIcons[dispatchEntry.type] || '❌'}</span>`;
+  if(tempOut.includes(n)) return '<span class="out-mark">❌</span>';
+  return '';
+}
+// 值班人員／當日主管共用的顯示片段（含番號、姓名、房號、外出標記），
+// 讓這兩處也跟一般人員 chip 一樣能顯示房間號碼。
+function dutyPersonHtml(n, opts){
+  opts = opts || {};
+  if(n===undefined || n===null) return '';
+  const p = P(n);
+  const nameCls = ['name'];
+  if(isConscript(n)) nameCls.push('conscript');
+  else if(n===supervisorNum) nameCls.push('supervisor');
+  const room = roomNumbers[n];
+  const roomHtml = room ? `<span class="room-tag">${esc(room)}房</span>` : '';
+  const titleHtml = (opts.showTitle && titles[n]) ? `${esc(titles[n])} ` : '';
+  const cls = ['duty-person']; if(opts.cls) cls.push(opts.cls);
+  return `<span class="${cls.join(' ')}"><span class="duty-label">${esc(opts.label)}</span>：<b>${p.num}</b> ${titleHtml}<span class="${nameCls.join(' ')}">${p.name}</span>${roomHtml}${outMarkHtml(n)}</span>`;
+}
+function chip(n, ord, opts){
+  if(n===undefined || n===null) return '<span class="chip empty">—</span>';
+  opts = opts || {};
+  const p = P(n);
+  const chipCls = ['chip'];
+  if(opts.big) chipCls.push('big');
+  const nameCls = ['name'];
+  if(isConscript(n)) nameCls.push('conscript');
+  else if(n===supervisorNum) nameCls.push('supervisor');
+  else if(opts.crew) nameCls.push('crew');
+  else if(opts.away) nameCls.push('away');
+  const ordHtml = ord ? `<span class="ord">${ord}</span>` : '';
+  const outMark = outMarkHtml(n);
+  const carLbl = opts.carMap ? opts.carMap[n] : null;
+  const room = roomNumbers[n];
+  const carHtml = carLbl ? `<span class="chip-meta car-meta"><span class="car-tag">${esc(carLbl)}</span></span>` : '';
+  const roomHtml = room ? `<span class="chip-meta room-meta"><span class="room-tag">${esc(room)}房</span></span>` : '';
+  return `<span class="${chipCls.join(' ')}">${carHtml}<span class="chip-row1">${ordHtml}<span class="num">${p.num}</span><span class="${nameCls.join(' ')}">${p.name}</span>${outMark}</span>${roomHtml}</span>`;
+}
+function chipsWithRank(arr, startRank, opts){
+  if(!arr.length) return '<span class="chip empty">無</span>';
+  // Conscripts (81/82/83) don't get an 出勤順序 number and always print after
+  // everyone else in this group, regardless of where they fell in the array.
+  const normal = arr.filter(n=>!isConscript(n));
+  const conscripts = arr.filter(n=>isConscript(n));
+  let rank = startRank;
+  const normalHtml = normal.map(n=>chip(n, (rank++)+'.', opts)).join('');
+  const conscriptHtml = conscripts.map(n=>chip(n, null, opts)).join('');
+  return normalHtml + conscriptHtml;
+}
+
+function renderPeopleBlock(group){
+  const list = applyOverrides(group.flat);
+  const car1 = list.slice(0,2);
+  const car2 = list.slice(2,4);
+  const standby = list.slice(4);
+  const carMap = buildCarMap(list);
+
+  let html = '<div class="cars-grid">';
+  html += `<div class="col car1"><div class="col-label"><span class="dot"></span>第一台車（順位1、2）</div><div class="people">${chipsWithRank(car1,1,{big:true,crew:true,carMap})}</div></div>`;
+  html += `<div class="col car2"><div class="col-label"><span class="dot"></span>第二台車（順位3、4）</div><div class="people">${chipsWithRank(car2,3,{big:true,crew:true,carMap})}</div></div>`;
+  html += `<div class="col standby"><div class="col-label"><span class="dot"></span>備勤人員（依出勤順序）</div><div class="people">${chipsWithRank(standby,5,{carMap})}</div>${dutyPersonHtml(supervisorNum, {label:'當日主管', showTitle:true, cls:'supervisor-line'})}</div>`;
+  html += `</div>`;
+
+  const od = activeOtherDuty(group.hourStart);
+  if(od.length){
+    html += od.map(g=>`<div class="other-duty">外勤人員（${g.label}）<div class="people">${chipsWithRank(g.persons,1,{away:true})}</div></div>`).join('');
+  }
+  if(group.otherList && group.otherList.length){
+    html += `<div class="other-duty">其他勤務（匯入資料）<div class="people">${chipsWithRank(group.otherList,1,{away:true})}</div></div>`;
+  }
+
+  let extras = [];
+  if(group.inspectList && group.inspectList.length){
+    extras.push(`消防查察：${group.inspectList.map(n=>chip(n, null, {away:true})).join('')}`);
+  } else if(group.inspect){
+    extras.push(`消防查察：${chip(group.inspect, null, {away:true})}`);
+  }
+  if(group.waterList && group.waterList.length){
+    extras.push(`水源查察：${group.waterList.map(n=>chip(n, null, {away:true})).join('')}`);
+  }
+  if(group.training) extras.push(`訓練科目：${group.training}`);
+  if(group.note) extras.push(group.note);
+  if(extras.length) html += `<div class="note">${extras.join('　｜　')}</div>`;
+
+  return html;
+}
+
+function getCurrentGroupIndex(now){
+  const h = now.getHours();
+  const groups = getDisplayGroups();
+  return groups.findIndex(g=>g.matches(h));
+}
+
+// 民國年日期字串，格式跟匯入解析出來的 dateStr 一致（例如「民國115年7月11日」），
+// 用來核對匯入的班表是不是今天的。
+function todayROCDateStr(){
+  const now = new Date();
+  return `民國${now.getFullYear()-1911}年${now.getMonth()+1}月${now.getDate()}日`;
+}
+// 早上 8 點換班之後，如果目前匯入的班表日期跟今天不一樣（含尚未匯入任何檔案
+// 的情況），就在日期旁邊的（核對日期）文字上加閃爍提示。
+function checkDateMismatch(){
+  const el = document.querySelector('.check-date');
+  if(!el) return;
+  const now = new Date();
+  const mismatch = now.getHours() >= 8 && importedDateStr !== todayROCDateStr();
+  el.textContent = mismatch ? '⚠ 尚未匯入今日勤務表，請核對日期！' : '（核對日期）';
+  el.classList.toggle('blink-warn', mismatch);
+}
+
+function renderNow(){
+  const now = new Date();
+  document.getElementById('clockTime').innerHTML =
+    now.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) +
+    `<span class="date">${now.toLocaleDateString('zh-TW',{year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'})}</span>`;
+  checkDateMismatch();
+
+  const groups = getDisplayGroups();
+  const gi = getCurrentGroupIndex(now);
+  const g = groups[gi] || groups[0];
+  const panel = document.getElementById('nowPanel');
+  panel.innerHTML = `
+    <div class="now-head">
+      <span class="tag">現在時段 NOW</span>
+      ${dutyPersonHtml(g.onduty, {label:'值班人員'})}
+    </div>
+    <div class="now-range">${g.label}</div>
+    ${renderPeopleBlock(g)}
+  `;
+  document.querySelectorAll('.hour-card').forEach((el,i)=>{
+    el.classList.toggle('active', i===gi);
+  });
+}
+
+function renderList(){
+  const wrap = document.getElementById('listWrap');
+  wrap.innerHTML = '';
+  const groups = getDisplayGroups();
+  groups.forEach((g,i)=>{
+    const div = document.createElement('div');
+    div.className = 'hour-card';
+    div.innerHTML = `
+      <div class="htop">
+        <span class="range">${g.label}</span>
+        <span class="flag">${dutyPersonHtml(g.onduty, {label:'值班人員', cls:'compact'})}｜點擊展開</span>
+      </div>
+      <div class="hbody">${renderPeopleBlock(g)}</div>
+    `;
+    div.addEventListener('click', ()=> div.classList.toggle('expanded'));
+    wrap.appendChild(div);
+  });
+}
+
+function renderTempOut(){
+  const wrap = document.getElementById('tempOutList');
+  if(!tempOut.length){ wrap.innerHTML = '<span class="chip empty">目前無人登記外出</span>'; return; }
+  wrap.innerHTML = tempOut.map(n=>{
+    const p = P(n);
+    return `<span class="tag-chip out">${p.num} ${p.name}<button class="edit-only" data-n="${n}">✕</button></span>`;
+  }).join('');
+  wrap.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const n = Number(btn.dataset.n);
+      tempOut = tempOut.filter(x=>x!==n);
+      renderAll();
+      syncToCloud();
+    });
+  });
+}
+
+function renderSubst(){
+  const wrap = document.getElementById('subList');
+  if(!substitutions.length){ wrap.innerHTML = '<span class="chip empty">目前無代班登記</span>'; return; }
+  wrap.innerHTML = substitutions.map((s,i)=>{
+    const pf = P(s.from), pt = P(s.to);
+    return `<span class="tag-chip sub">${pf.num} ${pf.name} 代 ${pt.num} ${pt.name}<button class="edit-only" data-i="${i}">✕</button></span>`;
+  }).join('');
+  wrap.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const i = Number(btn.dataset.i);
+      substitutions.splice(i,1);
+      renderAll();
+      syncToCloud();
+    });
+  });
+}
+
+function renderDispatchOut(){
+  const wrap = document.getElementById('dispatchOutList');
+  if(!dispatchOut.length){ wrap.innerHTML = '<span class="chip empty">目前無人出勤</span>'; return; }
+
+  // Group entries by batchId, preserving the order batches were confirmed in.
+  const batchIds = [];
+  const byBatch = {};
+  dispatchOut.forEach(entry=>{
+    if(!byBatch[entry.batchId]){ byBatch[entry.batchId] = []; batchIds.push(entry.batchId); }
+    byBatch[entry.batchId].push(entry);
+  });
+
+  wrap.innerHTML = batchIds.map(bid=>{
+    const entries = byBatch[bid];
+    const type = entries[0].type;
+    const label = presetLabels[type] || '出勤';
+    const peopleHtml = entries.map(({num,type})=>{
+      const p = P(num);
+      const icon = presetIcons[type] || '';
+      return `<span class="tag-chip dispatch"><span class="dispatch-type-icon">${icon}</span>${p.num} ${p.name}<button class="edit-only" data-n="${num}" data-batch="${bid}">✕</button></span>`;
+    }).join('');
+    return `<div class="dispatch-batch" data-batch="${bid}">
+      <div class="dispatch-batch-head">
+        <span class="label">${label}（${entries.length}人）</span>
+        <button type="button" class="btn return-batch edit-only" data-return-batch="${bid}">🔄 整批返隊</button>
+      </div>
+      <div class="people">${peopleHtml}</div>
+    </div>`;
+  }).join('');
+
+  // Remove one person from their batch.
+  wrap.querySelectorAll('button[data-n]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const n = Number(btn.dataset.n);
+      const bid = btn.dataset.batch;
+      dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
+      renderAll();
+      syncToCloud();
+    });
+  });
+  // Return an entire batch (everyone who went out together) at once.
+  wrap.querySelectorAll('button[data-return-batch]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const bid = btn.dataset.returnBatch;
+      const entries = byBatch[bid] || [];
+      const label = presetLabels[entries[0] ? entries[0].type : ''] || '這批';
+      const ok = await showConfirm(`確定要讓「${label}」這批 ${entries.length} 位人員一起返隊嗎？`);
+      if(ok){
+        dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
+        renderAll();
+        syncToCloud();
+      }
+    });
+  });
+}
+
+function renderAll(){
+  renderList();
+  renderNow();
+  renderTempOut();
+  renderDispatchOut();
+  renderSubst();
+}
+
+// ================= MODAL (custom alert/confirm) =================
+// Artifact previews run inside a sandboxed iframe where window.alert /
+// window.confirm are unreliable (they can silently no-op instead of showing
+// a dialog — this is what made "一鍵返隊" appear to do nothing). These two
+// helpers replace them with an in-page modal, returning a Promise so calling
+// code can still `await` a yes/no answer just like confirm() used to give.
+function showAlert(msg){
+  return new Promise(resolve=> openModal(msg, false, ()=>resolve(true)));
+}
+function showConfirm(msg){
+  return new Promise(resolve=> openModal(msg, true, resolve));
+}
+function openModal(msg, isConfirm, resolve){
+  const overlay = document.getElementById('modalOverlay');
+  document.getElementById('modalMsg').textContent = msg;
+  const okBtn = document.getElementById('modalOk');
+  const cancelBtn = document.getElementById('modalCancel');
+  cancelBtn.style.display = isConfirm ? 'inline-block' : 'none';
+  overlay.style.display = 'flex';
+  function cleanup(result){
+    overlay.style.display = 'none';
+    okBtn.removeEventListener('click', onOk);
+    cancelBtn.removeEventListener('click', onCancel);
+    resolve(result);
+  }
+  function onOk(){ cleanup(true); }
+  function onCancel(){ cleanup(false); }
+  okBtn.addEventListener('click', onOk);
+  cancelBtn.addEventListener('click', onCancel);
+}
+
+// ================= TEMP-OUT PICKER (暫時外出登記) =================
+document.getElementById('tempOutPickBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(); });
+document.getElementById('tempOutCancel').addEventListener('click', closeTempOutPicker);
+document.getElementById('tempOutConfirm').addEventListener('click', confirmTempOut);
+
+function openTempOutPicker(){
+  const wrap = document.getElementById('tempOutCheckboxes');
+  // 只列出今日上班、且尚未標記❌的人員；不預先勾選任何人。
+  const roster = getTodayRosterNums();
+  const nums = roster.filter(n=>!isMarkedOut(n)).sort((a,b)=>a-b);
+  wrap.innerHTML = nums.map(n=>
+    `<label class="dispatch-check"><input type="checkbox" value="${n}"> ${n} ${names[n]}</label>`
+  ).join('');
+  document.getElementById('tempOutPicker').style.display = 'block';
+}
+function closeTempOutPicker(){
+  document.getElementById('tempOutPicker').style.display = 'none';
+}
+async function confirmTempOut(){
+  const checks = document.querySelectorAll('#tempOutCheckboxes input[type=checkbox]:checked');
+  if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
+  checks.forEach(cb=>{
+    const n = Number(cb.value);
+    if(!tempOut.includes(n)) tempOut.push(n);
+  });
+  closeTempOutPicker();
+  renderAll();
+  syncToCloud();
+}
+
+// ================= SUBSTITUTION INPUT =================
+document.getElementById('subAdd').addEventListener('click', addSubst);
+async function addSubst(){
+  if(!unlocked) return;
+  const fromInput = document.getElementById('subFromInput');
+  const toInput = document.getElementById('subToInput');
+  const from = Number(fromInput.value.trim());
+  const to = Number(toInput.value.trim());
+  if(!from || !names[from] || !to || !names[to]){
+    await showAlert('請輸入正確的代班人與被代班人番號。');
+    return;
+  }
+  if(from === to){ await showAlert('代班人與被代班人不能相同。'); return; }
+  substitutions.push({from, to});
+  fromInput.value = ''; toInput.value = '';
+  renderAll();
+  syncToCloud();
+}
+
+// ================= QUICK DISPATCH (快速出勤登記) =================
+// Checking someone off here registers them into `dispatchOut` (shown in this
+// panel's own "目前出勤中" list, grouped by which confirm click added them —
+// a batch — tagged with the 🚑/🔥/🚨 icon for whichever type was picked).
+// This is separate from 暫時外出登記 (tempOut), which stays only for
+// individually-typed-in entries. Both still put a ❌ mark on the person's
+// schedule chip (see isMarkedOut), since either way they're away from the
+// station. Each batch has its own "整批返隊" button so a group that went out
+// together on the same case can come back together, without affecting any
+// other batch that's still out.
+const presetLabels = { ems:'🚑 救護', fire:'🔥 火警', other:'🚨 其他' };
+const presetIcons  = { ems:'🚑', fire:'🔥', other:'🚨' };
+document.querySelectorAll('.dispatch-presets button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type); });
+});
+document.getElementById('dispatchCancel').addEventListener('click', closeDispatchPicker);
+document.getElementById('dispatchConfirm').addEventListener('click', confirmDispatch);
+
+function openDispatchPicker(type){
+  const wrap = document.getElementById('dispatchCheckboxes');
+  // 只列出今日上班（在班表 1～休息時間 欄位中出現）的人員，且已經標記❌
+  // （不管是暫時外出還是已經在出勤中）的人不再重複出現於勾選名單。
+  const roster = getTodayRosterNums();
+  const nums = roster.filter(n=>!isMarkedOut(n)).sort((a,b)=>a-b);
+
+  // 預設先勾選現在時段順位第1、2位（第一台車人員），方便直接確認出勤。
+  const now = new Date();
+  const groups = getDisplayGroups();
+  const gi = getCurrentGroupIndex(now);
+  const curFlat = applyOverrides((groups[gi] || groups[0]).flat);
+  const defaultChecked = new Set(curFlat.filter(n=>!isMarkedOut(n)).slice(0,2));
+
+  wrap.innerHTML = nums.map(n=>{
+    // 91、92 通常是救護專責人員，特別加上 🚑 圖示方便辨識勾選。
+    const isEms = (n===91 || n===92);
+    const label = isEms ? `🚑 ${n} ${names[n]}` : `${n} ${names[n]}`;
+    const checked = defaultChecked.has(n) ? 'checked' : '';
+    return `<label class="dispatch-check"><input type="checkbox" value="${n}" ${checked}> ${label}</label>`;
+  }).join('');
+  document.getElementById('dispatchPicker').style.display = 'block';
+  document.getElementById('dispatchPicker').dataset.type = type;
+}
+function closeDispatchPicker(){
+  document.getElementById('dispatchPicker').style.display = 'none';
+}
+async function confirmDispatch(){
+  const type = document.getElementById('dispatchPicker').dataset.type;
+  const checks = document.querySelectorAll('#dispatchCheckboxes input[type=checkbox]:checked');
+  if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
+  const batchId = ++dispatchBatchSeq; // everyone confirmed together shares one batch, so they can return together later
+  checks.forEach(cb=>{
+    const n = Number(cb.value);
+    if(!dispatchOut.some(d=>d.num===n)) dispatchOut.push({num:n, type, batchId});
+  });
+  closeDispatchPicker();
+  renderAll();
+  syncToCloud();
+}
+
+// ================= EXCEL IMPORT =================
+document.getElementById('importBtn').addEventListener('click', ()=>{ if(unlocked) document.getElementById('fileInput').click(); });
+
+document.getElementById('fileInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt){
+    try{
+      const data = new Uint8Array(evt.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:undefined});
+      fillMergedCells(ws, aoa);
+      const result = parseScheduleAOA(aoa);
+      names = result.names;
+      titles = result.titles;
+      schedule = result.schedule;
+      // The static demo's otherDuty groups (persons/hours) belong to the sample
+      // day only. A newly imported day has its own 其他勤務 people, which are
+      // now parsed per-hour directly into schedule[i].otherList, so we must not
+      // keep the old demo groups around — otherwise unrelated people from the
+      // previous day's other-duty list would get wrongly excluded from standby.
+      otherDuty = [];
+      const explicitSup = extractSupervisorNum(aoa, names);
+      supervisorNum = explicitSup !== null ? explicitSup : detectSupervisorNum(schedule);
+      rosterNums = extractRosterNums(aoa);
+      // 新的一天，之前的出勤/外出/代班標記不再適用，一併清空。
+      tempOut = [];
+      dispatchOut = [];
+      substitutions = [];
+      updateHeaderFromImport(aoa, names, titles, supervisorNum);
+      document.getElementById('importMsg').textContent =
+        `匯入成功：解析出 ${result.schedule.length} 個時段、${Object.keys(result.names).length} 位人員。` +
+        `消防查察／水源查察／其他勤務欄位中出現的人員，該時段將自動排除於備勤名單之外。` +
+        `22:00–00:00 與 00:00–08:00 兩個夜間合併時段已改為直接讀取該時段本身跨小時彙整後的備勤順序。` +
+        `每次開啟本頁都需要重新匯入 Excel 勤務表（本頁不會記住上次的檔案）。`;
+      document.getElementById('importMsg').className = 'importmsg ok';
+      renderAll();
+      syncToCloud();
+    }catch(err){
+      console.error(err);
+      document.getElementById('importMsg').textContent =
+        '匯入失敗：檔案格式與預期表格不符（' + err.message + '）。目前仍使用原本班表，請提供檔案讓我確認欄位配置。';
+      document.getElementById('importMsg').className = 'importmsg err';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  e.target.value = '';
+});
+
+function normText(v){ return (v===undefined||v===null) ? '' : String(v).replace(/\s+/g,''); }
+
+// Excel 常見用「合併儲存格」表示同一個值橫跨多列/多欄（例如某人整天 08-18
+// 都在同一個外勤，只在最上面那一格填寫一次）。XLSX.utils.sheet_to_json 只會
+// 把值放在合併範圍左上角那一格，其餘被合併的格子會是 undefined，導致後面
+// 每一小時的判斷讀不到值（這就是「17、18番只有第一個時段有顯示」的成因）。
+// 這裡把每個合併範圍左上角的值，往下/往右複製貼進範圍內原本是空的格子。
+function fillMergedCells(ws, aoa){
+  const merges = (ws && ws['!merges']) || [];
+  merges.forEach(range=>{
+    const s = range.s, e = range.e;
+    if(!aoa[s.r]) return;
+    const topVal = aoa[s.r][s.c];
+    if(topVal===undefined || topVal===null || topVal==='') return;
+    for(let r=s.r; r<=e.r; r++){
+      if(!aoa[r]) aoa[r] = [];
+      for(let c=s.c; c<=e.c; c++){
+        if(r===s.r && c===s.c) continue;
+        if(aoa[r][c]===undefined || aoa[r][c]===null || aoa[r][c]===''){
+          aoa[r][c] = topVal;
+        }
+      }
+    }
+  });
+}
+
+// Reads the sheet's title row (民國X年X月X日星期X ・ X人共同勤務分配表) and the
+// explicit "當日主管：XXX，今日上班番號：..." line, then rewrites the on-screen
+// header so imported files show the correct date/weekday/supervisor instead of
+// whatever the page happened to load with.
+function updateHeaderFromImport(aoa, names, titles, supNum){
+  let dateStr = '', weekday = '', peopleCount = '', orgName = '';
+  for(const row of aoa){
+    for(const cell of (row||[])){
+      if(cell===undefined || cell===null) continue;
+      const s = String(cell);
+      if(!dateStr){
+        const dm = s.match(/中華民國\s*(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日/);
+        if(dm) dateStr = `民國${dm[1]}年${dm[2]}月${dm[3]}日`;
+      }
+      if(!weekday){
+        const wm = s.match(/星期\s*([一二三四五六日])/);
+        if(wm) weekday = `星期${wm[1]}`;
+      }
+      if(!peopleCount){
+        const pm = s.match(/(\d+)\s*人共同勤務分配表/);
+        if(pm){
+          peopleCount = pm[1];
+          const om = s.match(/^(.*?)\s*\d+\s*人共同勤務分配表/);
+          if(om && om[1]) orgName = om[1].trim();
+        }
+      }
+    }
+    if(dateStr && weekday && peopleCount) break;
+  }
+  if(orgName) document.getElementById('unitTitle').textContent = orgName;
+  importedDateStr = dateStr || importedDateStr;
+  const sup = { num: supNum, name: names[supNum]||'?', title: titles[supNum]||'隊員' };
+  const parts = [];
+  parts.push(`${esc(peopleCount || Object.keys(names).length)}人共同勤務分配表`);
+  // 日期／星期用較大字體標出，方便一眼核對是不是今天的班表。
+  if(dateStr || weekday) parts.push(`<span class="date-highlight">${esc([dateStr, weekday].filter(Boolean).join(' '))}</span>`);
+  parts.push(`當日主管：${esc(sup.title)} ${esc(sup.name)}`);
+  document.getElementById('unitSub').innerHTML = parts.join(' ・ ') + '<span class="check-date">（核對日期）</span>';
+}
+
+// The sheet usually states the day's supervisor explicitly, e.g.
+// "當日主管：小隊長蘇建維，今日上班番號：2、10、13...". This is far more
+// reliable than guessing from row-repetition, since the supervisor may also
+// rotate through standby/car slots on any given day. Falls back to null if
+// no such line is found (caller then uses detectSupervisorNum as before).
+function extractSupervisorNum(aoa, names){
+  for(const row of aoa){
+    for(const cell of (row||[])){
+      if(cell===undefined || cell===null) continue;
+      const s = String(cell);
+      const m = s.match(/當日主管[:：]\s*([^\s,，、\n]+)/);
+      if(m){
+        const token = m[1];
+        for(const [numStr, nm] of Object.entries(names)){
+          if(nm && token.endsWith(nm)) return Number(numStr);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Reads the same "當日主管：小隊長蘇建維，今日上班番號：2、10、13、..." line used by
+// extractSupervisorNum, and pulls out the full list of today's working 番號.
+// Used as a completeness safety net for standby build-up (see buildFlatForBlock).
+function extractRosterNums(aoa){
+  for(const row of aoa){
+    for(const cell of (row||[])){
+      if(cell===undefined || cell===null) continue;
+      const s = String(cell);
+      const m = s.match(/今日上班番號[:：]\s*([0-9、,，\s]+)/);
+      if(m){
+        return m[1].split(/[、,，\s]+/).map(Number).filter(n=>!isNaN(n));
+      }
+    }
+  }
+  return null;
+}
+
+// Parses a sheet matching the source duty-roster layout: column 0 = time range
+// ("08-09"), a header row containing "(1)".."(14)" marks the 備勤 grid, and a
+// roster table with 編號/服勤人員 columns.
+function parseScheduleAOA(aoa){
+  let headerRow = -1;
+  const posColMap = {};
+  for(let r=0;r<aoa.length;r++){
+    const row = aoa[r] || [];
+    for(let c=0;c<row.length;c++){
+      const cell = normText(row[c]);
+      const m = cell.match(/^\((\d{1,2})\)$/);
+      if(m){ headerRow = r; posColMap[Number(m[1])] = c; }
+    }
+    if(headerRow!==-1 && Object.keys(posColMap).length>=2) break;
+  }
+  if(headerRow===-1) throw new Error('找不到 (1)(2)...備勤欄位標題列');
+
+  function findCol(keyword, rowsToScan){
+    const kw = normText(keyword);
+    for(const r of rowsToScan){
+      const row = aoa[r] || [];
+      for(let c=0;c<row.length;c++){
+        if(normText(row[c]).includes(kw)) return c;
+      }
+    }
+    return -1;
+  }
+  const scanRows = [Math.max(0,headerRow-2), Math.max(0,headerRow-1), headerRow];
+  const onDutyCol = findCol('值班', scanRows);
+  const trainingCol = findCol('週保養', scanRows);
+  const restCol = findCol('休息時間', scanRows);
+  const REST_KEY = 999; // sorts after every real (1)-(14) position
+
+  // 消防查察／水源查察／其他勤務 can each span more than one column (e.g. two
+  // people out on inspection at once). Find each label's starting column, then
+  // take everything up to the next label (or up to the 備勤 grid) as its range,
+  // so every number typed under that heading gets picked up for that hour.
+  const posStartCol = Math.min(...Object.values(posColMap));
+  // Uses "starts with" rather than an exact match, since header cells often
+  // wrap onto a second line in the sheet (e.g. "週保養\n或訓練" normalizes to
+  // "週保養或訓練", which never exactly equals the plain keyword "週保養").
+  // An exact-match requirement silently dropped that column from labelStarts,
+  // which then let the neighbouring 水源查察 range wrongly swallow it.
+  function findColExact(keyword){
+    const kw = normText(keyword);
+    for(const r of scanRows){
+      const row = aoa[r] || [];
+      for(let c=0;c<row.length;c++){
+        if(normText(row[c]).startsWith(kw)) return c;
+      }
+    }
+    return -1;
+  }
+  const labelStarts = ['值班','消防查察','水源查察','週保養','其他勤務']
+    .map(lab=>({lab, col: findColExact(lab)}))
+    .filter(x=>x.col>=0)
+    .sort((a,b)=>a.col-b.col);
+  const labelRanges = {};
+  labelStarts.forEach((cur,i)=>{
+    const nextCol = (i+1<labelStarts.length) ? labelStarts[i+1].col : posStartCol;
+    labelRanges[cur.lab] = [cur.col, nextCol];
+  });
+
+  function readNumsInRange(row, range){
+    if(!range) return [];
+    const [start,end] = range;
+    const out = [];
+    for(let c=start;c<end;c++){
+      const v = row[c];
+      if(v===undefined||v===null||v==='') continue;
+      // 同一格內可能是合併儲存格，內容以換行/空白分隔多個番號（例如
+      // "17\n18" 代表兩個人整段時間都在同一項勤務），必須逐一拆開解析，
+      // 不能把換行去掉後直接當成一個數字（那樣 "17\n18" 會變成 1718）。
+      const cleaned = String(v).replace(/[【】\[\]]/g,'');
+      cleaned.split(/\s+/).forEach(part=>{
+        if(!part) return;
+        const n = Number(part);
+        if(!isNaN(n)) out.push(n);
+      });
+    }
+    return out;
+  }
+
+  const schedule = [];
+  for(let r=headerRow+1; r<aoa.length; r++){
+    const row = aoa[r] || [];
+    const timeCell = normText(row[0]);
+    const tm = timeCell.match(/(\d{1,2})[-~](\d{1,2})/);
+    if(!tm){ if(schedule.length>0) break; else continue; }
+    let s = Number(tm[1]), e = Number(tm[2]);
+    if(e < s) e += 24;
+
+    function readNum(col){
+      if(col<0) return undefined;
+      const v = row[col];
+      if(v===undefined||v===null||v==='') return undefined;
+      const cleaned = String(v).replace(/[【】\[\]\s]/g,'');
+      const n = Number(cleaned);
+      return isNaN(n) ? undefined : n;
+    }
+    const pos = {};
+    for(const [posNum,col] of Object.entries(posColMap)){
+      const v = readNum(col);
+      if(v!==undefined) pos[Number(posNum)] = v;
+    }
+    const restNum = readNum(restCol);
+    if(restNum !== undefined) pos[REST_KEY] = restNum;
+    if(Object.keys(pos).length===0) continue;
+
+    const entry = { s, e, pos };
+    const onduty = readNum(onDutyCol);
+    if(onduty!==undefined) entry.onduty = onduty;
+    const inspectList = readNumsInRange(row, labelRanges['消防查察']);
+    if(inspectList.length){ entry.inspectList = inspectList; entry.inspect = inspectList[0]; }
+    const waterList = readNumsInRange(row, labelRanges['水源查察']);
+    if(waterList.length) entry.waterList = waterList;
+    const otherList = readNumsInRange(row, labelRanges['其他勤務']);
+    if(otherList.length) entry.otherList = otherList;
+    if(trainingCol>=0 && row[trainingCol]) entry.training = String(row[trainingCol]).trim();
+    schedule.push(entry);
+  }
+  if(schedule.length===0) throw new Error('未解析出任何時段資料列');
+
+  let numCol=-1, nameCol=-1;
+  for(let r=0;r<aoa.length;r++){
+    const row = aoa[r] || [];
+    for(let c=0;c<row.length;c++){
+      const cell = normText(row[c]);
+      if(cell.includes('編號')) numCol = c;
+      if(cell.includes('服勤人員')) nameCol = c;
+    }
+    if(numCol!==-1 && nameCol!==-1) break;
+  }
+  const names = {}; const titles = {};
+  if(numCol!==-1 && nameCol!==-1){
+    for(let r=0;r<aoa.length;r++){
+      const row = aoa[r] || [];
+      const numRaw = row[numCol];
+      if(numRaw===undefined||numRaw===null||numRaw==='') continue;
+      const n = Number(String(numRaw).trim());
+      if(isNaN(n)) continue;
+      let nameVal = (row[nameCol+1]!==undefined && row[nameCol+1]!==null) ? row[nameCol+1] : row[nameCol];
+      let titleVal = row[nameCol];
+      if(nameVal===undefined || nameVal===null || String(nameVal).trim()==='') continue;
+      names[n] = String(nameVal).trim();
+      const tstr = (titleVal!==undefined && titleVal!==null) ? String(titleVal).trim() : '';
+      if(tstr && tstr!==names[n]) titles[n] = tstr;
+    }
+  }
+  if(Object.keys(names).length===0){
+    Object.assign(names, defaultNames);
+    Object.assign(titles, defaultTitles);
+  }
+
+  return { schedule, names, titles };
+}
+
+// ================= SETTINGS（右上角兩個按鈕） =================
+document.getElementById('funcSettingsBtn').addEventListener('click', ()=>{
+  document.getElementById('toggleFullSchedule').checked = showFullSchedule;
+  document.getElementById('funcModalOverlay').style.display = 'flex';
+});
+document.getElementById('funcModalClose').addEventListener('click', ()=>{
+  showFullSchedule = document.getElementById('toggleFullSchedule').checked;
+  localStorage.setItem('showFullSchedule', showFullSchedule ? '1' : '0');
+  applyFullScheduleVisibility();
+  document.getElementById('funcModalOverlay').style.display = 'none';
+});
+
+document.getElementById('linkSettingsBtn').addEventListener('click', openRoomModal);
+document.getElementById('roomModalCancel').addEventListener('click', ()=>{
+  document.getElementById('roomModalOverlay').style.display = 'none';
+});
+document.getElementById('roomModalSave').addEventListener('click', ()=>{
+  document.querySelectorAll('#roomInputsWrap input').forEach(inp=>{
+    const n = Number(inp.dataset.num);
+    const v = inp.value.trim();
+    if(v) roomNumbers[n] = v; else delete roomNumbers[n];
+  });
+  saveRoomNumbers();
+  document.getElementById('roomModalOverlay').style.display = 'none';
+  renderAll();
+});
+function openRoomModal(){
+  const wrap = document.getElementById('roomInputsWrap');
+  const nums = Object.keys(names).map(Number).sort((a,b)=>a-b);
+  wrap.innerHTML = nums.map(n=>`
+    <div class="room-list-row">
+      <span class="who">${n} ${esc(names[n])}</span>
+      <input type="text" data-num="${n}" value="${esc(roomNumbers[n]||'')}" placeholder="房號">
+    </div>
+  `).join('');
+  document.getElementById('roomModalOverlay').style.display = 'flex';
+}
+
+// ================= INIT =================
+// (No cross-session storage: this page does not save the imported schedule
+// anywhere. Each time it's opened, it starts from the built-in demo data —
+// use 📥 匯入 Excel 勤務表 again if you need to reload today's schedule.)
+let windowLoaded = false;
+function scrollToCurrentIfReady(){
+  if(!windowLoaded) return;
+  const now = new Date();
+  const gi = getCurrentGroupIndex(now);
+  const cards = document.querySelectorAll('.hour-card');
+  if(cards[gi]){
+    cards[gi].classList.add('expanded');
+    cards[gi].scrollIntoView({block:'center', behavior:'smooth'});
+  }
+}
+window.addEventListener('load', ()=>{
+  windowLoaded = true;
+  scrollToCurrentIfReady();
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('SW register failed:', err));
+  }
+});
+
+(function init(){
+  applyFullScheduleVisibility();
+  renderAll();
+  setInterval(renderNow, 1000);
+  scrollToCurrentIfReady();
+  initFirebase();
+})();
+</script>
+</body>
+</html>
