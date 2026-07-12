@@ -180,6 +180,18 @@
   .htop .flag .duty-person{ font-size:.72rem; color:var(--amber); letter-spacing:.5px; }
   .htop .flag .duty-person b{ color:var(--amber); }
   .htop .flag .duty-person .room-tag{ font-size:1em; }
+
+  .updatebanner{
+    display:none; position:fixed; top:0; left:0; right:0; z-index:400;
+    text-align:center; background:var(--amber); color:var(--bg);
+    font-weight:900; font-size:.85rem; padding:10px 12px; cursor:pointer;
+    box-shadow:0 2px 10px #000000aa; animation:updateblink 1.2s infinite;
+  }
+  .updatebanner.show{display:block;}
+  @keyframes updateblink{
+    0%,100%{opacity:1;}
+    50%{opacity:.4;}
+  }
   .other-duty{ margin-top:10px; font-size:.87rem; color: var(--dim2); }
   .other-duty .people{ margin-top:4px; }
   .note{ margin-top:10px; font-size:.82rem; color:var(--dim2); line-height:1.6;}
@@ -313,6 +325,7 @@
 </style>
 </head>
 <body class="locked">
+<div id="updateBanner" class="updatebanner">🔔 偵測到 GitHub 上已有新版本，點此立即更新畫面</div>
 <div id="toastStack"></div>
 <div class="lock-fab">
   <button type="button" id="lockToggleBtn" class="btn" title="解鎖編輯">🔒 解鎖編輯</button>
@@ -1812,6 +1825,51 @@ window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('SW register failed:', err));
   }
 });
+
+// ================= 自動偵測改版（GitHub 更新後自動提示，不用重新安裝/清快取） =================
+// 注意：這個頁面有註冊 Service Worker（./sw.js）。如果 sw.js 對頁面本身採用
+// 「快取優先」策略，以下的版本偵測仍可運作（因為用 HEAD 檢查搭配 no-store），
+// 但點擊更新時會一併呼叫 registration.update() 來讓瀏覽器重新檢查 SW 是否也有新版本。
+(function(){
+  const bannerEl = document.getElementById('updateBanner');
+  let baselineTag = null;
+  let checking = false;
+
+  function selfUrl(){
+    return location.origin + location.pathname; // 不含 query/hash，固定指向本頁面檔案本身
+  }
+  function getPageVersionTag(){
+    return fetch(selfUrl(), {method:'HEAD', cache:'no-store'})
+      .then(res => res.headers.get('etag') || res.headers.get('last-modified') || null)
+      .catch(()=> null);
+  }
+  function checkForUpdate(){
+    if(checking || bannerEl.classList.contains('show')) return;
+    checking = true;
+    getPageVersionTag().then(tag=>{
+      checking = false;
+      if(tag && baselineTag && tag !== baselineTag){
+        bannerEl.classList.add('show');
+      }
+    });
+  }
+  bannerEl.addEventListener('click', ()=>{
+    const goReload = ()=>{
+      // 用帶時間戳的網址強制略過瀏覽器/桌面圖示的快取，抓最新版本
+      location.href = selfUrl() + '?_r=' + Date.now();
+    };
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.getRegistration().then(reg=>{
+        if(reg) reg.update().finally(goReload); else goReload();
+      }).catch(goReload);
+    } else {
+      goReload();
+    }
+  });
+  getPageVersionTag().then(tag=>{ baselineTag = tag; });
+  setInterval(checkForUpdate, 3*60*1000); // 每 3 分鐘背景檢查一次
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForUpdate(); });
+})();
 
 (function init(){
   applyFullScheduleVisibility();
