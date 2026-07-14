@@ -115,6 +115,9 @@
   }
   .picker-mode-label{ font-size:.78rem; color:var(--dim2); margin-bottom:6px; }
   .picker-mode-label.all{ color: var(--away); font-weight:700; }
+  .dispatch-type-select{ display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px; font-size:.9rem; }
+  .dispatch-type-select label{ display:flex; align-items:center; gap:5px; cursor:pointer; }
+  .dispatch-type-select input{ cursor:pointer; }
   .dispatch-check{ display:flex; align-items:center; gap:5px; cursor:pointer; }
   .dispatch-check input{ cursor:pointer; }
   .btn.return-all{ border-color: var(--red); color: var(--red); }
@@ -381,6 +384,11 @@
   </div>
   <div id="dispatchPicker" class="dispatch-picker" style="display:none;">
     <div class="picker-mode-label" id="dispatchModeLabel"></div>
+    <div class="dispatch-type-select" id="dispatchTypeSelect">
+      <label class="dispatch-check"><input type="radio" name="dispatchType" value="ems"> 🚑 救護</label>
+      <label class="dispatch-check"><input type="radio" name="dispatchType" value="fire"> 🔥 火警</label>
+      <label class="dispatch-check"><input type="radio" name="dispatchType" value="other"> 🚨 其他</label>
+    </div>
     <div id="dispatchCheckboxes" class="dispatch-checkboxes"></div>
     <div class="inrow">
       <button type="button" class="btn primary" id="dispatchConfirm">✓ 確定出勤</button>
@@ -721,13 +729,22 @@ function isMarkedOut(n){
   return tempOut.includes(n) || dispatchOut.some(d=>d.num===n);
 }
 
-// "今日上班番號": prefer the explicit roster line from the imported sheet; if
-// that's not available (e.g. still on the demo data), fall back to every
-// number that actually appears anywhere in today's schedule grid (positions
-// 1-14 + 休息時間 + 值班), which is exactly the same underlying set.
+// "今日上班番號": union of the explicit roster line from the imported sheet
+// (if present) AND every number that actually appears anywhere in today's
+// schedule grid (值班 + positions 1-14 + 休息時間). Using only the explicit
+// text line silently dropped anyone who worked a slot that hour but wasn't
+// named in that summary line (e.g. 7番 on duty 8-12 but missing from the
+// checkbox list below) — the schedule grid is the source of truth for who
+// actually appears, so it's always merged in, not just used as a fallback.
 function getTodayRosterNums(){
-  if(rosterNums && rosterNums.length) return rosterNums;
   const set = new Set();
+  // 明列的「今日上班番號」文字（若有）先放進去，這是最基本的名單。
+  if(rosterNums && rosterNums.length) rosterNums.forEach(n=>set.add(n));
+  // 再把班表每一小時的值班／(1)~(14)備勤欄位／休息時間欄位（對照(5)~休息班）
+  // 實際出現過的每一個番號都併進來——即使某人沒被寫進「今日上班番號」那行
+  // 文字，只要他在任何一個時段的欄位裡出現過（例如8-12時7番有上班），
+  // 就代表他確實在班表上，理應能在快速出勤登記／暫時外出登記的名單中選到，
+  // 不會因為那行文字漏寫而消失不見。
   schedule.forEach(row=>{
     if(row.onduty!==undefined) set.add(row.onduty);
     Object.values(row.pos||{}).forEach(v=>set.add(v));
@@ -1433,6 +1450,9 @@ document.getElementById('dispatchConfirm').addEventListener('click', confirmDisp
 // useAll=true（➕ 其他人員按鈕觸發，案件類型預設為「其他」🚨）：列出系統認識
 // 的「全部人員」，不受今日上班名單判讀限制，作為班表判讀有誤、名單找不到人
 // 時的手動備援選單；此模式下不預先勾選任何人，避免誤選。
+// 不論從哪個按鈕開啟，案件類型（🚑救護／🔥火警／🚨其他）都會在 picker 內用
+// 單選鈕顯示、且可以改選——這樣就算是用「➕ 其他人員」補登名單找不到的人，
+// 也能正確標記成救護／火警／其他，跟同一批次的人一起顯示同樣的圖示。
 function openDispatchPicker(type, useAll){
   const wrap = document.getElementById('dispatchCheckboxes');
   // 只列出今日上班（在班表 1～休息時間 欄位中出現）的人員，且已經標記❌
@@ -1461,6 +1481,13 @@ function openDispatchPicker(type, useAll){
   const modeLabel = document.getElementById('dispatchModeLabel');
   modeLabel.textContent = useAll ? '目前顯示：全部人員（不限今日上班名單）' : '目前顯示：今日上班人員';
   modeLabel.className = 'picker-mode-label' + (useAll ? ' all' : '');
+  // 案件類型單選鈕：預設勾選觸發此 picker 的類型（🚑/🔥/🚨 三個按鈕各自帶入
+  // 對應類型；「➕ 其他人員」預設為「其他」），但不論從哪個按鈕開啟都能在
+  // 這裡改選，這樣用「➕ 其他人員」補登名單找不到的人時，也能正確標記成
+  // 救護／火警／其他，跟同一批次裡其他人一起顯示同樣的圖示。
+  document.querySelectorAll('#dispatchTypeSelect input[name=dispatchType]').forEach(r=>{
+    r.checked = (r.value === type);
+  });
   document.getElementById('dispatchPicker').style.display = 'block';
   document.getElementById('dispatchPicker').dataset.type = type;
 }
@@ -1468,7 +1495,8 @@ function closeDispatchPicker(){
   document.getElementById('dispatchPicker').style.display = 'none';
 }
 async function confirmDispatch(){
-  const type = document.getElementById('dispatchPicker').dataset.type;
+  const typeInput = document.querySelector('#dispatchTypeSelect input[name=dispatchType]:checked');
+  const type = typeInput ? typeInput.value : document.getElementById('dispatchPicker').dataset.type;
   const checks = document.querySelectorAll('#dispatchCheckboxes input[type=checkbox]:checked');
   if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
   const batchId = ++dispatchBatchSeq; // everyone confirmed together shares one batch, so they can return together later
