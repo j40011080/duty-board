@@ -908,11 +908,21 @@ function buildFlatForBlock(blocks, idx, carsCache){
   if(idx === 0){
     standby = rowFullSeq(cur, used);
   } else {
+    // 沿用前面時段車1/車2人員進本時段備勤名單之前，必須先確認這個人「本時段
+    // 自己這一列」的(5)~休息班欄位裡真的有出現他的番號——否則代表他這個時段
+    // 已經下班／不在了（例如 12 點後就沒上班），不能只因為他在更早的時段開過
+    // 車，就一路被沿用列入之後每個時段的備勤名單。
+    const ownRangeNums = new Set(
+      Object.keys(cur.pos)
+        .filter(k => Number(k) >= 5)
+        .map(k => cur.pos[k])
+    );
     for(let back=1; back<=idx; back++){
       const prev = carsCache[idx-back];
       const seq = [...prev.car1, ...prev.car2];
       for(const v of seq){
         if(!isEligibleStandby(v, used)) continue;
+        if(!ownRangeNums.has(v)) continue; // 本時段(5)-休息班欄位沒有這個番號，代表已下班，不予沿用
         used.add(v);
         standby.push(v);
       }
