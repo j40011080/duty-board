@@ -113,6 +113,8 @@
     display:flex; flex-wrap:wrap; gap:6px 14px; max-height:220px; overflow-y:auto;
     margin-bottom:10px; font-size:.88rem;
   }
+  .picker-mode-label{ font-size:.78rem; color:var(--dim2); margin-bottom:6px; }
+  .picker-mode-label.all{ color: var(--away); font-weight:700; }
   .dispatch-check{ display:flex; align-items:center; gap:5px; cursor:pointer; }
   .dispatch-check input{ cursor:pointer; }
   .btn.return-all{ border-color: var(--red); color: var(--red); }
@@ -332,6 +334,7 @@
   <span id="syncIndicator">⚪ 尚未設定雲端同步</span>
 </div>
 <div class="settings-fab">
+  <button type="button" id="manualUpdateCheckBtn" title="手動檢查更新">🔄</button>
   <button type="button" id="funcSettingsBtn" title="功能設定">⚙️</button>
   <button type="button" id="linkSettingsBtn" title="連動設定・房號">🔗</button>
 </div>
@@ -356,7 +359,9 @@
 <div class="panel-box tempout">
   <h3>暫時外出登記（勾選人員，只在名字後方標記❌，不會移除、不影響原本順位）</h3>
   <button type="button" class="btn ghost edit-only" id="tempOutPickBtn">👤 選擇人員</button>
+  <button type="button" class="btn ghost edit-only" id="tempOutOtherBtn">➕ 其他人員（名單找不到時使用）</button>
   <div id="tempOutPicker" class="dispatch-picker" style="display:none;">
+    <div class="picker-mode-label" id="tempOutModeLabel"></div>
     <div id="tempOutCheckboxes" class="dispatch-checkboxes"></div>
     <div class="inrow">
       <button type="button" class="btn primary" id="tempOutConfirm">✓ 確定外出</button>
@@ -372,8 +377,10 @@
     <button type="button" class="btn ghost" data-type="ems">🚑 救護（通常2-3人）</button>
     <button type="button" class="btn ghost" data-type="fire">🔥 火警（通常2人）</button>
     <button type="button" class="btn ghost" data-type="other">🚨 其他（通常2-3人）</button>
+    <button type="button" class="btn ghost" id="dispatchOtherPersonBtn">➕ 其他人員（名單找不到時使用）</button>
   </div>
   <div id="dispatchPicker" class="dispatch-picker" style="display:none;">
+    <div class="picker-mode-label" id="dispatchModeLabel"></div>
     <div id="dispatchCheckboxes" class="dispatch-checkboxes"></div>
     <div class="inrow">
       <button type="button" class="btn primary" id="dispatchConfirm">✓ 確定出勤</button>
@@ -726,6 +733,13 @@ function getTodayRosterNums(){
     Object.values(row.pos||{}).forEach(v=>set.add(v));
   });
   return [...set];
+}
+
+// 安全網用：列出系統目前認識的「全部人員」（不受今日上班名單/班表判讀限制），
+// 供暫時外出登記／快速出勤登記的「➕ 其他人員」選單使用。萬一班表匯入判讀
+// 有誤、導致某人沒被列入今日上班名單，這裡仍能手動找到並勾選該人。
+function getAllPersonnelNums(){
+  return Object.keys(names).map(Number).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
 }
 
 function P(n){ return { num:n, name:names[n]||"?", title:titles[n]||"隊員" }; }
@@ -1337,18 +1351,24 @@ function openModal(msg, isConfirm, resolve){
 }
 
 // ================= TEMP-OUT PICKER (暫時外出登記) =================
-document.getElementById('tempOutPickBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(); });
+document.getElementById('tempOutPickBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(false); });
+document.getElementById('tempOutOtherBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(true); });
 document.getElementById('tempOutCancel').addEventListener('click', closeTempOutPicker);
 document.getElementById('tempOutConfirm').addEventListener('click', confirmTempOut);
 
-function openTempOutPicker(){
+// useAll=false（預設）：只列出今日上班名單中的人員，方便一般情況下快速勾選。
+// useAll=true（➕ 其他人員按鈕）：列出系統認識的「全部人員」，不受今日上班
+// 名單判讀限制，作為萬一班表判讀有誤、名單找不到人時的手動備援選單。
+function openTempOutPicker(useAll){
   const wrap = document.getElementById('tempOutCheckboxes');
-  // 只列出今日上班、且尚未標記❌的人員；不預先勾選任何人。
-  const roster = getTodayRosterNums();
+  const roster = useAll ? getAllPersonnelNums() : getTodayRosterNums();
   const nums = roster.filter(n=>!isMarkedOut(n)).sort((a,b)=>a-b);
   wrap.innerHTML = nums.map(n=>
     `<label class="dispatch-check"><input type="checkbox" value="${n}"> ${n} ${names[n]}</label>`
   ).join('');
+  const modeLabel = document.getElementById('tempOutModeLabel');
+  modeLabel.textContent = useAll ? '目前顯示：全部人員（不限今日上班名單）' : '目前顯示：今日上班人員';
+  modeLabel.className = 'picker-mode-label' + (useAll ? ' all' : '');
   document.getElementById('tempOutPicker').style.display = 'block';
 }
 function closeTempOutPicker(){
@@ -1399,25 +1419,37 @@ async function addSubst(){
 // other batch that's still out.
 const presetLabels = { ems:'🚑 救護', fire:'🔥 火警', other:'🚨 其他' };
 const presetIcons  = { ems:'🚑', fire:'🔥', other:'🚨' };
-document.querySelectorAll('.dispatch-presets button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type); });
+document.querySelectorAll('.dispatch-presets button[data-type]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type, false); });
+});
+document.getElementById('dispatchOtherPersonBtn').addEventListener('click', ()=>{
+  if(unlocked) openDispatchPicker('other', true);
 });
 document.getElementById('dispatchCancel').addEventListener('click', closeDispatchPicker);
 document.getElementById('dispatchConfirm').addEventListener('click', confirmDispatch);
 
-function openDispatchPicker(type){
+// useAll=false（預設，由 🚑/🔥/🚨 三個案件類型按鈕觸發）：只列出今日上班名單
+// 中尚未出勤的人員。
+// useAll=true（➕ 其他人員按鈕觸發，案件類型預設為「其他」🚨）：列出系統認識
+// 的「全部人員」，不受今日上班名單判讀限制，作為班表判讀有誤、名單找不到人
+// 時的手動備援選單；此模式下不預先勾選任何人，避免誤選。
+function openDispatchPicker(type, useAll){
   const wrap = document.getElementById('dispatchCheckboxes');
   // 只列出今日上班（在班表 1～休息時間 欄位中出現）的人員，且已經標記❌
   // （不管是暫時外出還是已經在出勤中）的人不再重複出現於勾選名單。
-  const roster = getTodayRosterNums();
+  const roster = useAll ? getAllPersonnelNums() : getTodayRosterNums();
   const nums = roster.filter(n=>!isMarkedOut(n)).sort((a,b)=>a-b);
 
   // 預設先勾選現在時段順位第1、2位（第一台車人員），方便直接確認出勤。
-  const now = new Date();
-  const groups = getDisplayGroups();
-  const gi = getCurrentGroupIndex(now);
-  const curFlat = applyOverrides((groups[gi] || groups[0]).flat);
-  const defaultChecked = new Set(curFlat.filter(n=>!isMarkedOut(n)).slice(0,2));
+  // 使用「全部人員」備援模式時不自動預選，避免在不確定名單的情況下誤勾。
+  let defaultChecked = new Set();
+  if(!useAll){
+    const now = new Date();
+    const groups = getDisplayGroups();
+    const gi = getCurrentGroupIndex(now);
+    const curFlat = applyOverrides((groups[gi] || groups[0]).flat);
+    defaultChecked = new Set(curFlat.filter(n=>!isMarkedOut(n)).slice(0,2));
+  }
 
   wrap.innerHTML = nums.map(n=>{
     // 91、92 通常是救護專責人員，特別加上 🚑 圖示方便辨識勾選。
@@ -1426,6 +1458,9 @@ function openDispatchPicker(type){
     const checked = defaultChecked.has(n) ? 'checked' : '';
     return `<label class="dispatch-check"><input type="checkbox" value="${n}" ${checked}> ${label}</label>`;
   }).join('');
+  const modeLabel = document.getElementById('dispatchModeLabel');
+  modeLabel.textContent = useAll ? '目前顯示：全部人員（不限今日上班名單）' : '目前顯示：今日上班人員';
+  modeLabel.className = 'picker-mode-label' + (useAll ? ' all' : '');
   document.getElementById('dispatchPicker').style.display = 'block';
   document.getElementById('dispatchPicker').dataset.type = type;
 }
@@ -1832,28 +1867,39 @@ window.addEventListener('load', ()=>{
 // 但點擊更新時會一併呼叫 registration.update() 來讓瀏覽器重新檢查 SW 是否也有新版本。
 (function(){
   const bannerEl = document.getElementById('updateBanner');
+  const manualBtn = document.getElementById('manualUpdateCheckBtn');
   let baselineTag = null;
   let checking = false;
 
   function selfUrl(){
     return location.origin + location.pathname; // 不含 query/hash，固定指向本頁面檔案本身
   }
+  // 電腦版瀏覽器的快取機制比手機更頑固：即使 HEAD 請求帶 no-store，中間的代理
+  // 快取／瀏覽器磁碟快取仍可能回傳舊的 etag/last-modified。改用 GET 並在網址帶
+  // 一次性時間戳，同時明確加上 Cache-Control/Pragma: no-cache 標頭，強迫略過
+  // 所有快取層，抓到的一定是伺服器當下真正的版本標記。
   function getPageVersionTag(){
-    return fetch(selfUrl(), {method:'HEAD', cache:'no-store'})
+    const url = selfUrl() + '?_v=' + Date.now();
+    return fetch(url, {
+      method:'GET',
+      cache:'no-store',
+      headers:{ 'Cache-Control':'no-cache', 'Pragma':'no-cache' }
+    })
       .then(res => res.headers.get('etag') || res.headers.get('last-modified') || null)
       .catch(()=> null);
   }
-  function checkForUpdate(){
-    if(checking || bannerEl.classList.contains('show')) return;
+  function checkForUpdate(manual){
+    if(checking) return Promise.resolve(false);
+    if(bannerEl.classList.contains('show')) return Promise.resolve(true);
     checking = true;
-    getPageVersionTag().then(tag=>{
+    return getPageVersionTag().then(tag=>{
       checking = false;
-      if(tag && baselineTag && tag !== baselineTag){
-        bannerEl.classList.add('show');
-      }
+      const changed = !!(tag && baselineTag && tag !== baselineTag);
+      if(changed) bannerEl.classList.add('show');
+      return changed;
     });
   }
-  bannerEl.addEventListener('click', ()=>{
+  function doReload(){
     const goReload = ()=>{
       // 用帶時間戳的網址強制略過瀏覽器/桌面圖示的快取，抓最新版本
       location.href = selfUrl() + '?_r=' + Date.now();
@@ -1865,10 +1911,25 @@ window.addEventListener('load', ()=>{
     } else {
       goReload();
     }
-  });
+  }
+  bannerEl.addEventListener('click', doReload);
+  if(manualBtn){
+    manualBtn.addEventListener('click', ()=>{
+      if(bannerEl.classList.contains('show')){ doReload(); return; }
+      manualBtn.disabled = true;
+      const prevText = manualBtn.textContent;
+      manualBtn.textContent = '⏳';
+      checkForUpdate(true).then(changed=>{
+        manualBtn.disabled = false;
+        manualBtn.textContent = prevText;
+        if(!changed) showAlert('目前已是最新版本。');
+      });
+    });
+  }
   getPageVersionTag().then(tag=>{ baselineTag = tag; });
-  setInterval(checkForUpdate, 3*60*1000); // 每 3 分鐘背景檢查一次
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForUpdate(); });
+  setInterval(()=>checkForUpdate(false), 90*1000); // 背景檢查間隔縮短為 90 秒
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForUpdate(false); });
+  window.addEventListener('focus', ()=>checkForUpdate(false)); // 電腦版切換視窗/分頁回來時也主動檢查一次
 })();
 
 (function init(){
