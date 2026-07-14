@@ -1900,30 +1900,34 @@ window.addEventListener('load', ()=>{
     });
   }
   function doReload(){
+    forceHardReload();
+  }
+  // 模擬「Ctrl+Shift+R 強制重新整理」：先清空 Cache Storage、註銷 Service
+  // Worker（電腦版瀏覽器/SW 快取比手機更頑固，之前光靠 GET+no-cache 檢查版
+  // 本標記，有時候標記本身就是被快取住的舊值，導致按了「手動檢查更新」卻
+  // 顯示「已是最新版」但畫面其實還是舊的），再用帶新時間戳的網址整頁導頁，
+  // 確保這次一定是跟伺服器要全新的檔案，不會再從任何一層快取讀到舊版本。
+  function forceHardReload(){
     const goReload = ()=>{
-      // 用帶時間戳的網址強制略過瀏覽器/桌面圖示的快取，抓最新版本
-      location.href = selfUrl() + '?_r=' + Date.now();
+      location.replace(selfUrl() + '?_r=' + Date.now());
     };
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.getRegistration().then(reg=>{
-        if(reg) reg.update().finally(goReload); else goReload();
-      }).catch(goReload);
-    } else {
-      goReload();
-    }
+    const clearCaches = ('caches' in window)
+      ? caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{})
+      : Promise.resolve();
+    const clearSW = ('serviceWorker' in navigator)
+      ? navigator.serviceWorker.getRegistrations().then(regs=>Promise.all(regs.map(r=>r.unregister()))).catch(()=>{})
+      : Promise.resolve();
+    Promise.all([clearCaches, clearSW]).finally(goReload);
   }
   bannerEl.addEventListener('click', doReload);
   if(manualBtn){
+    // 手動按鈕直接強制硬性重新整理，不再先用版本標記比對「是否已是最新」
+    // ——因為版本標記本身也可能被快取住而不準，比對再多次也沒用，乾脆每次
+    // 按下去就直接清快取＋重新整理，保證拿到伺服器上真正最新的檔案。
     manualBtn.addEventListener('click', ()=>{
-      if(bannerEl.classList.contains('show')){ doReload(); return; }
       manualBtn.disabled = true;
-      const prevText = manualBtn.textContent;
       manualBtn.textContent = '⏳';
-      checkForUpdate(true).then(changed=>{
-        manualBtn.disabled = false;
-        manualBtn.textContent = prevText;
-        if(!changed) showAlert('目前已是最新版本。');
-      });
+      forceHardReload();
     });
   }
   getPageVersionTag().then(tag=>{ baselineTag = tag; });
