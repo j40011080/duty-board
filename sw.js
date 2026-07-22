@@ -62,13 +62,18 @@ self.addEventListener('push', (event) => {
   let parseError = '';
   try { payload = event.data ? event.data.json() : {}; } catch (e) { parseError = e.message; payload = {}; }
 
-  const title = payload.title || '北港分隊 勤務看板';
-  const body = payload.body || '';
+  // 重點修正：FCM 送到瀏覽器 push 事件的內容，是包了一層信封──
+  // { fcmMessageId, priority, from, data: { title, body, url } }──
+  // 我們真正要的 title/body/url 是在 payload.data 裡面，不是最外層。
+  // 這裡同時保留 payload.title 當備援，避免以後傳輸格式變動又白白再查一次。
+  const fcmData = payload.data || payload;
+  const title = fcmData.title || '北港分隊 勤務看板';
+  const body = fcmData.body || '';
   const options = {
     body,
     icon: './icon.svg',
     badge: './icon.svg',
-    data: { url: payload.url || './' }
+    data: { url: fcmData.url || './' }
   };
 
   // 除錯紀錄：每次收到 push 都記一筆，之後回頭比對哪次是空白的、當時原始內容長怎樣。
