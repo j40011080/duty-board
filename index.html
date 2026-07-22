@@ -1372,7 +1372,7 @@ function pushSystemNotification(title, body){
 //
 // ★ 部署後記得把下面換成你自己 Worker 的網址，例如：
 //   https://beigang-line-notify.你的帳號.workers.dev
-const LINE_NOTIFY_WORKER_URL = 'PASTE_YOUR_CLOUDFLARE_WORKER_URL_HERE';
+const LINE_NOTIFY_WORKER_URL = 'https://beigang-line-notify.j40011080.workers.dev';
 
 function sendLineMessage(text){
   if(!isNotifyHub) return; // 不是通知主機的裝置，什麼都不做
