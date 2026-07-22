@@ -14,6 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Chivo+Mono:wght@400;600;900&display=swap');
 
@@ -447,6 +448,12 @@
     <label class="toggle-row">
       <input type="checkbox" id="toggleFullSchedule"> 顯示「全日班表」區塊（點擊展開任一時段）
     </label>
+    <label class="toggle-row" style="margin-top:8px;">
+      <input type="checkbox" id="toggleNotifyHub"> 此裝置為通知主機（負責發送 Telegram 群組通知）
+    </label>
+    <div style="font-size:.78rem; color:var(--dim2); margin:2px 0 14px;">
+      只勾選「隊部這台值班電腦」就好，其他人手機上不要勾——避免同一則通知被重複發送好幾次。
+    </div>
     <button type="button" class="btn" id="notifyPermBtn" style="margin-bottom:18px;">🔔 開啟出勤／返隊 手機通知</button>
     <div id="notifyPermStatus" style="font-size:.8rem; color:var(--dim2); margin:-12px 0 18px;"></div>
     <div class="modal-actions">
@@ -703,6 +710,11 @@ async function tryUnlock(){
 
 // 是否顯示「全日班表」區塊（功能設定）
 let showFullSchedule = localStorage.getItem('showFullSchedule') !== '0';
+// 這台裝置是不是「通知主機」——只有勾選這個的裝置，才會在偵測到出勤／
+// 返隊變化時對外發送 Telegram 群組通知。這個設定只存在本機（localStorage），
+// 刻意不跟 Firebase 同步，因為每個裝置本來就要各自決定「我是不是那台
+// 負責發通知的值班電腦」，同步反而會讓所有裝置變成同一個開關。
+let isNotifyHub = localStorage.getItem('isNotifyHub') === '1';
 function applyFullScheduleVisibility(){
   const head = document.querySelector('.list-head');
   const wrap = document.getElementById('listWrap');
@@ -1286,8 +1298,44 @@ function requestNotifyPermission(){
   }
   Notification.requestPermission().then(perm=>{
     const el = document.getElementById('notifyPermStatus');
-    if(perm === 'granted') el.textContent = '✅ 已開啟，出勤／返隊時會跳出手機通知。';
+    if(perm === 'granted'){
+      el.textContent = '✅ 已開啟，出勤／返隊時會跳出手機通知。';
+      registerFcmToken();
+    }
     else el.textContent = '尚未開啟（瀏覽器權限被拒絕，可到手機設定裡的網站權限重新開啟）。';
+  });
+}
+
+// ================= 背景推播裝置註冊（Firebase Cloud Messaging） =================
+// 跟前面「requestNotifyPermission」不一樣：那個只能在頁面開著時跳通知，
+// 這裡是額外把裝置註冊進 FCM，讓值班電腦之後可以透過 Cloudflare Worker
+// 觸發，在頁面關閉、手機沒開著任何東西的情況下，也能收到推播。
+//
+// ★ 部署前務必替換：到 Firebase 主控台 → 專案設定 → Cloud Messaging →
+//   「Web Push 憑證」產生一組 VAPID 金鑰，貼到下面。沒換的話這段功能
+//   不會啟用（但完全不影響原本頁面內通知／跨裝置同步等其他功能）。
+const FCM_VAPID_KEY = 'BKRIh0tVNcCgsrYiLBhpkLtPNAo-8Sbs7UrAOUEfxk9e-oCikbeDKk0vTf_QyvBH2fsWthV03Pj7d7ThLth-C9w';
+
+let messaging = null;
+function registerFcmToken(){
+  if(!cloudEnabled || !db) return;                       // 沒接雲端同步就不用做
+  if(!('serviceWorker' in navigator)) return;
+  if(!FCM_VAPID_KEY || FCM_VAPID_KEY.indexOf('PASTE_YOUR') === 0){
+    console.warn('尚未設定 FCM_VAPID_KEY，背景推播功能暫未啟用');
+    return;
+  }
+  navigator.serviceWorker.ready.then(reg=>{
+    try{
+      if(!messaging) messaging = firebase.messaging();
+      messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg })
+        .then(token=>{
+          if(!token) return;
+          // 用 token 本身當資料庫的 key：同一支手機重新取得同一個 token
+          // 時只會覆蓋同一筆紀錄，不會越存越多筆重複的裝置。
+          db.ref('fcmTokens/' + token).set({ updatedAt: Date.now(), ua: navigator.userAgent });
+        })
+        .catch(err=> console.warn('取得推播 token 失敗', err));
+    }catch(e){ console.warn('FCM 初始化例外', e); }
   });
 }
 function notifyPermStatusText(){
@@ -1311,21 +1359,63 @@ function pushSystemNotification(title, body){
     try{ new Notification(title, opts); }catch(e){}
   }
 }
+// ================= 背景推播觸發（即時、免費、不用信用卡、不用裝App） =================
+// 只有勾選「此裝置為通知主機」的那台裝置（通常是隊部值班電腦）才會真的
+// 觸發推播；其他手機就算開著頁面也不會發送，避免同一則通知被重複發送。
+// 因為是「值班電腦本來就一直開著、即時收到 Firebase 同步」的當下直接
+// 觸發，沒有輪詢、沒有延遲。
+//
+// FCM（Firebase Cloud Messaging）的發送 API 不開放瀏覽器直接呼叫（會被
+// CORS 擋下來、而且要用到不能外流的服務帳戶金鑰），所以一樣透過
+// Cloudflare Worker 當中繼站轉發——這支 Worker 跟之前是同一支，只是改
+// 讓它去呼叫 FCM，而不是 LINE。部署步驟見「背景推播設定步驟.md」。
+const NOTIFY_WORKER_URL = 'https://beigang-line-notify.j40011080.workers.dev';
+
+function sendPushNotification(title, body){
+  if(!isNotifyHub) return;          // 不是通知主機的裝置，什麼都不做
+  if(!cloudEnabled || !db) return;
+  if(!NOTIFY_WORKER_URL || NOTIFY_WORKER_URL.indexOf('PASTE_YOUR') === 0) return;
+  // 讀出目前所有已經註冊背景推播的裝置 token，一併交給 Worker 去發送。
+  // （用值班電腦讀取，而不是讓 Worker 自己連 Firebase，架構更單純、
+  //  Worker 那邊完全不用碰你的 Firebase 專案權限。）
+  db.ref('fcmTokens').once('value').then(snap=>{
+    const obj = snap.val() || {};
+    const tokens = Object.keys(obj);
+    if(!tokens.length) return;
+    fetch(NOTIFY_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens, title, body, url: './' })
+    }).then(r=> r.json()).then(result=>{
+      // 把已經失效的裝置（同事解除通知權限、移除書籤等）從清單清掉，
+      // 避免清單越養越大、下次推播浪費時間在收不到的裝置上。
+      if(result && Array.isArray(result.invalidTokens) && result.invalidTokens.length){
+        const updates = {};
+        result.invalidTokens.forEach(t=> updates[t] = null);
+        db.ref('fcmTokens').update(updates);
+      }
+    }).catch(err=> console.warn('背景推播發送失敗', err));
+  }).catch(err=> console.warn('讀取裝置清單失敗', err));
+}
+
 function notifyDispatch(entries, type){
   const label = presetLabels[type] || '出勤';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(`🚨 已登記出勤・${label}`, names_, 'out');
   pushSystemNotification(`出勤登記・${label}`, names_);
+  sendPushNotification(`🚨 出勤登記・${label}`, names_);
 }
 function notifyReturn(entries, label){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(`🔄 已返隊${label ? '・' + label : ''}`, names_, 'back');
   pushSystemNotification(`返隊${label ? '・' + label : ''}`, names_);
+  sendPushNotification(`🔄 返隊${label ? '・' + label : ''}`, names_);
 }
 function notifyTempOut(entries){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast('🚶 已登記外出', names_, 'out');
   pushSystemNotification('外出登記', names_);
+  sendPushNotification('🚶 外出登記', names_);
 }
 
 // ================= 跨裝置通知比對 =================
@@ -1838,6 +1928,7 @@ function parseScheduleAOA(aoa){
 // ================= SETTINGS（右上角兩個按鈕） =================
 document.getElementById('funcSettingsBtn').addEventListener('click', ()=>{
   document.getElementById('toggleFullSchedule').checked = showFullSchedule;
+  document.getElementById('toggleNotifyHub').checked = isNotifyHub;
   document.getElementById('notifyPermStatus').textContent = notifyPermStatusText();
   document.getElementById('funcModalOverlay').style.display = 'flex';
 });
@@ -1845,6 +1936,8 @@ document.getElementById('funcModalClose').addEventListener('click', ()=>{
   showFullSchedule = document.getElementById('toggleFullSchedule').checked;
   localStorage.setItem('showFullSchedule', showFullSchedule ? '1' : '0');
   applyFullScheduleVisibility();
+  isNotifyHub = document.getElementById('toggleNotifyHub').checked;
+  localStorage.setItem('isNotifyHub', isNotifyHub ? '1' : '0');
   document.getElementById('funcModalOverlay').style.display = 'none';
 });
 document.getElementById('notifyPermBtn').addEventListener('click', requestNotifyPermission);
@@ -1980,6 +2073,11 @@ window.addEventListener('load', ()=>{
   setInterval(renderNow, 1000);
   scrollToCurrentIfReady();
   initFirebase();
+  // 之前已經按過「開啟通知」的人，重新整理頁面後不用再按一次——
+  // 只要瀏覽器權限還在，就自動把（可能已更新過的）token 重新註冊一次。
+  if('Notification' in window && Notification.permission === 'granted'){
+    registerFcmToken();
+  }
 })();
 </script>
 </body>
