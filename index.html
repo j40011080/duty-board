@@ -1174,7 +1174,7 @@ function renderTempOut(){
       tempOut = tempOut.filter(x=>x!==n);
       renderAll();
       syncToCloud();
-      notifyReturn([n]);
+      notifyReturn([n], '', true);
     });
   });
 }
@@ -1234,7 +1234,7 @@ function renderDispatchOut(){
       dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
       renderAll();
       syncToCloud();
-      notifyReturn([n]);
+      notifyReturn([n], '', true);
     });
   });
   // Return an entire batch (everyone who went out together) at once.
@@ -1248,7 +1248,7 @@ function renderDispatchOut(){
         dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
         renderAll();
         syncToCloud();
-        notifyReturn(entries.map(e=>e.num), label);
+        notifyReturn(entries.map(e=>e.num), label, true);
       }
     });
   });
@@ -1429,21 +1429,21 @@ function sendPushNotification(title, body){
   }).catch(err=> console.warn('讀取裝置清單失敗', err));
 }
 
-function notifyDispatch(entries, type){
+function notifyDispatch(entries, type, fromLocalAction){
   const label = presetLabels[type] || '出勤';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
-  showToast(`🚨 已登記出勤・${label}`, names_, 'out'); // 本機畫面即時提示，不合併、不delay
-  queuePushNotify('dispatch', entries, label);
+  showToast(`🚨 已登記出勤・${label}`, names_, 'out'); // 本機畫面即時提示，不受下面的限制影響
+  if(fromLocalAction) queuePushNotify('dispatch', entries, label);
 }
-function notifyReturn(entries, label){
+function notifyReturn(entries, label, fromLocalAction){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(`🔄 已返隊${label ? '・' + label : ''}`, names_, 'back');
-  queuePushNotify('return', entries, label);
+  if(fromLocalAction) queuePushNotify('return', entries, label);
 }
-function notifyTempOut(entries){
+function notifyTempOut(entries, fromLocalAction){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast('🚶 已登記外出', names_, 'out');
-  queuePushNotify('tempOut', entries, '');
+  if(fromLocalAction) queuePushNotify('tempOut', entries, '');
 }
 
 // ================= 通知合併（防止短時間內連續觸發被拆成好幾則推播） =================
@@ -1568,7 +1568,7 @@ async function confirmTempOut(){
   closeTempOutPicker();
   renderAll();
   syncToCloud();
-  notifyTempOut(addedNums);
+  notifyTempOut(addedNums, true);
 }
 
 // ================= SUBSTITUTION INPUT =================
@@ -1675,7 +1675,7 @@ async function confirmDispatch(){
   closeDispatchPicker();
   renderAll();
   syncToCloud();
-  notifyDispatch(confirmedNums, type);
+  notifyDispatch(confirmedNums, type, true);
 }
 
 // ================= EXCEL IMPORT =================
