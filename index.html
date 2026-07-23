@@ -1314,7 +1314,7 @@ function requestNotifyPermission(){
 // ★ 部署前務必替換：到 Firebase 主控台 → 專案設定 → Cloud Messaging →
 //   「Web Push 憑證」產生一組 VAPID 金鑰，貼到下面。沒換的話這段功能
 //   不會啟用（但完全不影響原本頁面內通知／跨裝置同步等其他功能）。
-const FCM_VAPID_KEY = 'BKRIh0tVNcCgsrYiLBhpkLtPNAo-8Sbs7UrAOUEfxk9e-oCikbeDKk0vTf_QyvBH2fsWthV03Pj7d7ThLth-C9w';
+const FCM_VAPID_KEY = 'PASTE_YOUR_VAPID_KEY_HERE';
 
 let messaging = null;
 function registerFcmToken(){
@@ -1401,21 +1401,56 @@ function sendPushNotification(title, body){
 function notifyDispatch(entries, type){
   const label = presetLabels[type] || '出勤';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
-  showToast(`🚨 已登記出勤・${label}`, names_, 'out');
-  pushSystemNotification(`出勤登記・${label}`, names_);
-  sendPushNotification(`🚨 出勤登記・${label}`, names_);
+  showToast(`🚨 已登記出勤・${label}`, names_, 'out'); // 本機畫面即時提示，不合併、不delay
+  queuePushNotify('dispatch', entries, label);
 }
 function notifyReturn(entries, label){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(`🔄 已返隊${label ? '・' + label : ''}`, names_, 'back');
-  pushSystemNotification(`返隊${label ? '・' + label : ''}`, names_);
-  sendPushNotification(`🔄 返隊${label ? '・' + label : ''}`, names_);
+  queuePushNotify('return', entries, label);
 }
 function notifyTempOut(entries){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast('🚶 已登記外出', names_, 'out');
-  pushSystemNotification('外出登記', names_);
-  sendPushNotification('🚶 外出登記', names_);
+  queuePushNotify('tempOut', entries, '');
+}
+
+// ================= 通知合併（防止短時間內連續觸發被拆成好幾則推播） =================
+// 不管是操作者連續點了好幾次「✕」、還是跨裝置同步時序前後腳、或本來就是
+// 整批操作但中間有微小時間差，只要同一種通知在 NOTIFY_MERGE_WINDOW_MS
+// 這段時間內被觸發多次，就先暫存起來、合併成一則之後再真正送出手機推播。
+// 本機畫面的 showToast 完全不受影響，維持即時顯示。
+const NOTIFY_MERGE_WINDOW_MS = 2000;
+const pendingPush = {}; // kind -> { nums:Set, label, timer }
+
+function queuePushNotify(kind, entries, label){
+  if(!pendingPush[kind]) pendingPush[kind] = { nums: new Set(), label: label || '', timer: null };
+  const bucket = pendingPush[kind];
+  entries.forEach(n=>bucket.nums.add(n));
+  if(label && !bucket.label) bucket.label = label;
+  if(bucket.timer) clearTimeout(bucket.timer);
+  bucket.timer = setTimeout(()=>flushPushNotify(kind), NOTIFY_MERGE_WINDOW_MS);
+}
+
+function flushPushNotify(kind){
+  const bucket = pendingPush[kind];
+  if(!bucket) return;
+  pendingPush[kind] = null;
+  const nums = Array.from(bucket.nums);
+  if(!nums.length) return;
+  const names_ = nums.map(n=>`${n} ${names[n]||'?'}`).join('、');
+  const label = bucket.label;
+
+  if(kind === 'dispatch'){
+    pushSystemNotification(`出勤登記${label ? '・' + label : ''}`, names_);
+    sendPushNotification(`🚨 出勤登記${label ? '・' + label : ''}`, names_);
+  } else if(kind === 'return'){
+    pushSystemNotification(`返隊${label ? '・' + label : ''}`, names_);
+    sendPushNotification(`🔄 返隊${label ? '・' + label : ''}`, names_);
+  } else if(kind === 'tempOut'){
+    pushSystemNotification('外出登記', names_);
+    sendPushNotification('🚶 外出登記', names_);
+  }
 }
 
 // ================= 跨裝置通知比對 =================
