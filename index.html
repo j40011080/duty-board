@@ -449,12 +449,13 @@
       <input type="checkbox" id="toggleFullSchedule"> 顯示「全日班表」區塊（點擊展開任一時段）
     </label>
     <label class="toggle-row" style="margin-top:8px;">
-      <input type="checkbox" id="toggleNotifyHub"> 此裝置為通知主機（負責發送 Telegram 群組通知）
+      <input type="checkbox" id="toggleNotifyHub"> 此裝置為通知主機（負責發送手機推播通知）
     </label>
     <div style="font-size:.78rem; color:var(--dim2); margin:2px 0 14px;">
       只勾選「隊部這台值班電腦」就好，其他人手機上不要勾——避免同一則通知被重複發送好幾次。
     </div>
-    <button type="button" class="btn" id="notifyPermBtn" style="margin-bottom:18px;">🔔 開啟出勤／返隊 手機通知</button>
+    <button type="button" class="btn" id="notifyPermBtn" style="margin-bottom:8px;">🔔 開啟出勤／返隊 手機通知</button>
+    <button type="button" class="btn" id="notifyDisableBtn" style="margin-bottom:18px;">🔕 關閉此裝置的手機通知</button>
     <div id="notifyPermStatus" style="font-size:.8rem; color:var(--dim2); margin:-12px 0 18px;"></div>
     <div class="modal-actions">
       <button type="button" class="btn primary" id="funcModalClose">完成</button>
@@ -711,7 +712,7 @@ async function tryUnlock(){
 // 是否顯示「全日班表」區塊（功能設定）
 let showFullSchedule = localStorage.getItem('showFullSchedule') !== '0';
 // 這台裝置是不是「通知主機」——只有勾選這個的裝置，才會在偵測到出勤／
-// 返隊變化時對外發送 Telegram 群組通知。這個設定只存在本機（localStorage），
+// 返隊變化時對外發送手機推播通知（FCM）。這個設定只存在本機（localStorage），
 // 刻意不跟 Firebase 同步，因為每個裝置本來就要各自決定「我是不是那台
 // 負責發通知的值班電腦」，同步反而會讓所有裝置變成同一個開關。
 let isNotifyHub = localStorage.getItem('isNotifyHub') === '1';
@@ -1291,6 +1292,14 @@ function showToast(title, body, kind){
   }, 4200);
 }
 
+// 瀏覽器的「通知權限」本身沒有 API 可以讓網頁自己關掉（只能請求開啟，
+// 這是瀏覽器的安全限制，跟隱私權設定同一類，Claude 或任何網頁都做不到
+// 用 JS 直接撤銷）。所以「關閉」的做法是：把這台裝置的 FCM token 從
+// Firebase 的 fcmTokens 移除，Cloudflare Worker 就不會再推播給它；同時
+// 記一個本機旗標，避免下次重新整理頁面時，因為瀏覽器權限還在「granted」
+// 就被 init() 自動重新註冊回去。
+let notifyManuallyDisabled = localStorage.getItem('notifyManuallyDisabled') === '1';
+
 function requestNotifyPermission(){
   if(!('Notification' in window)){
     document.getElementById('notifyPermStatus').textContent = '此瀏覽器不支援手機系統通知，僅能看到頁面內的提醒橫幅。';
@@ -1299,11 +1308,32 @@ function requestNotifyPermission(){
   Notification.requestPermission().then(perm=>{
     const el = document.getElementById('notifyPermStatus');
     if(perm === 'granted'){
+      notifyManuallyDisabled = false;
+      localStorage.removeItem('notifyManuallyDisabled');
       el.textContent = '✅ 已開啟，出勤／返隊時會跳出手機通知。';
       registerFcmToken();
     }
     else el.textContent = '尚未開啟（瀏覽器權限被拒絕，可到手機設定裡的網站權限重新開啟）。';
   });
+}
+
+function disableNotify(){
+  const el = document.getElementById('notifyPermStatus');
+  notifyManuallyDisabled = true;
+  localStorage.setItem('notifyManuallyDisabled', '1');
+  if(!cloudEnabled || !db || !('serviceWorker' in navigator) || !FCM_VAPID_KEY || FCM_VAPID_KEY.indexOf('PASTE_YOUR') === 0){
+    el.textContent = '🔕 已關閉，這台裝置不會再收到出勤／返隊的手機推播。';
+    return;
+  }
+  navigator.serviceWorker.ready.then(reg=>{
+    try{
+      if(!messaging) messaging = firebase.messaging();
+      messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg })
+        .then(token=>{ if(token) db.ref('fcmTokens/' + token).remove(); })
+        .catch(()=>{});
+    }catch(e){}
+  });
+  el.textContent = '🔕 已關閉，這台裝置不會再收到出勤／返隊的手機推播。（瀏覽器本身的通知權限無法由網頁撤銷，如需完全關閉，可到手機/瀏覽器的網站通知設定裡手動關閉）';
 }
 
 // ================= 背景推播裝置註冊（Firebase Cloud Messaging） =================
@@ -1340,6 +1370,7 @@ function registerFcmToken(){
 }
 function notifyPermStatusText(){
   if(!('Notification' in window)) return '此瀏覽器不支援手機系統通知，僅能看到頁面內的提醒橫幅。';
+  if(notifyManuallyDisabled) return '🔕 已關閉，這台裝置不會再收到出勤／返隊的手機推播。';
   if(Notification.permission === 'granted') return '✅ 已開啟，出勤／返隊時會跳出手機通知。';
   if(Notification.permission === 'denied') return '尚未開啟（瀏覽器權限被拒絕，可到手機設定裡的網站權限重新開啟）。';
   return '';
@@ -1976,6 +2007,7 @@ document.getElementById('funcModalClose').addEventListener('click', ()=>{
   document.getElementById('funcModalOverlay').style.display = 'none';
 });
 document.getElementById('notifyPermBtn').addEventListener('click', requestNotifyPermission);
+document.getElementById('notifyDisableBtn').addEventListener('click', disableNotify);
 
 document.getElementById('linkSettingsBtn').addEventListener('click', openRoomModal);
 document.getElementById('roomModalCancel').addEventListener('click', ()=>{
@@ -2110,7 +2142,7 @@ window.addEventListener('load', ()=>{
   initFirebase();
   // 之前已經按過「開啟通知」的人，重新整理頁面後不用再按一次——
   // 只要瀏覽器權限還在，就自動把（可能已更新過的）token 重新註冊一次。
-  if('Notification' in window && Notification.permission === 'granted'){
+  if('Notification' in window && Notification.permission === 'granted' && !notifyManuallyDisabled){
     registerFcmToken();
   }
 })();
