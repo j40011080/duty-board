@@ -1123,16 +1123,18 @@ function chip(n, ord, opts){
   else if(opts.crew) nameCls.push('crew');
   else if(opts.away) nameCls.push('away');
   const ordHtml = ord ? `<span class="ord">${ord}</span>` : '';
-  const outMark = outMarkHtml(n);
   const carLbl = opts.carMap ? opts.carMap[n] : null;
   const room = roomNumbers[n];
-  // 出勤／外出時實際帶出去的車輛，疊加顯示在原本崗位車輛圖示後面
-  // （例如原本是「91車」崗位，出勤後變成「91車 🚑91車」）。
+  // 出勤／外出時實際帶出去的車輛，改放在房號後面（跟最上面的「崗位車輛」
+  // 標籤分開），避免被誤會成原本編制的崗位車輛；後面加「出」字更清楚是
+  // 「已經出去的車」而不是待命崗位。有這個標籤時，名字後面就不再重複顯示
+  // 出勤分類圖示（🚑/🔥/🚨/❌），避免同一件事顯示兩次。
   const outVehicle = assignedVehicleLabel(n);
-  const outVehicleHtml = outVehicle ? `<span class="car-tag out-vehicle-tag">${esc(outVehicle)}</span>` : '';
-  const carHtml = (carLbl || outVehicle) ? `<span class="chip-meta car-meta">${carLbl ? `<span class="car-tag">${esc(carLbl)}</span>` : ''}${outVehicleHtml}</span>` : '';
+  const outMark = outVehicle ? '' : outMarkHtml(n);
+  const carHtml = carLbl ? `<span class="chip-meta car-meta"><span class="car-tag">${esc(carLbl)}</span></span>` : '';
   const roomHtml = room ? `<span class="chip-meta room-meta"><span class="room-tag">${esc(room)}房</span></span>` : '';
-  return `<span class="${chipCls.join(' ')}">${carHtml}<span class="chip-row1">${ordHtml}<span class="num">${p.num}</span><span class="${nameCls.join(' ')}">${p.name}</span>${outMark}</span>${roomHtml}</span>`;
+  const outVehicleHtml = outVehicle ? `<span class="chip-meta out-vehicle-meta"><span class="car-tag out-vehicle-tag">${esc(outVehicle)} 出</span></span>` : '';
+  return `<span class="${chipCls.join(' ')}">${carHtml}<span class="chip-row1">${ordHtml}<span class="num">${p.num}</span><span class="${nameCls.join(' ')}">${p.name}</span>${outMark}</span>${roomHtml}${outVehicleHtml}</span>`;
 }
 function chipsWithRank(arr, startRank, opts){
   if(!arr.length) return '<span class="chip empty">無</span>';
