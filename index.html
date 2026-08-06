@@ -387,9 +387,9 @@
 </div>
 
 <div class="panel-box dispatch">
-  <h3>快速出勤登記（勾選出勤人員後依案件類型標記圖示⚕️🔥🚨；名單預設只列今日上班人員，找不到人可用「➕ 其他人員」；出勤登記後可依批次一起返隊）</h3>
+  <h3>快速出勤登記（勾選出勤人員後依案件類型標記圖示🏥🔥🚨；名單預設只列今日上班人員，找不到人可用「➕ 其他人員」；出勤登記後可依批次一起返隊）</h3>
   <div class="dispatch-presets edit-only">
-    <button type="button" class="btn ghost" data-type="ems">⚕️ 救護（通常2-3人）</button>
+    <button type="button" class="btn ghost" data-type="ems">🏥 救護（通常2-3人）</button>
     <button type="button" class="btn ghost" data-type="fire">🔥 火警（通常2人）</button>
     <button type="button" class="btn ghost" data-type="other">🚨 其他（通常2-3人）</button>
     <button type="button" class="btn ghost" id="dispatchOtherPersonBtn">➕ 其他人員（名單找不到時使用）</button>
@@ -397,7 +397,7 @@
   <div id="dispatchPicker" class="dispatch-picker" style="display:none;">
     <div class="picker-mode-label" id="dispatchModeLabel"></div>
     <div class="dispatch-type-select" id="dispatchTypeSelect">
-      <label class="dispatch-check"><input type="radio" name="dispatchType" value="ems"> ⚕️ 救護</label>
+      <label class="dispatch-check"><input type="radio" name="dispatchType" value="ems"> 🏥 救護</label>
       <label class="dispatch-check"><input type="radio" name="dispatchType" value="fire"> 🔥 火警</label>
       <label class="dispatch-check"><input type="radio" name="dispatchType" value="other"> 🚨 其他</label>
     </div>
@@ -1944,8 +1944,8 @@ async function addSubst(){
 // station. Each batch has its own "整批返隊" button so a group that went out
 // together on the same case can come back together, without affecting any
 // other batch that's still out.
-const presetLabels = { ems:'⚕️ 救護', fire:'🔥 火警', other:'🚨 其他' };
-const presetIcons  = { ems:'⚕️', fire:'🔥', other:'🚨' };
+const presetLabels = { ems:'🏥 救護', fire:'🔥 火警', other:'🚨 其他' };
+const presetIcons  = { ems:'🏥', fire:'🔥', other:'🚨' };
 // 出勤案件類型對應的「車輛類別＋圖示」，跟實際勾選的車輛號碼組合成通知文字，
 // 例如救護會顯示「救護車🚑（91車）救護」，火警「消防車🚒（11車）火警」。
 // 沒有固定車輛類別的「其他」案件類型，就不加類別名稱，直接顯示「🚨（41車）其他」。
