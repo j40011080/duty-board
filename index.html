@@ -241,6 +241,7 @@
   }
   .dispatch-batch-head .label{ color:var(--text); font-weight:700; }
   .btn.return-batch{ border-color: var(--away); color: var(--away); padding:5px 10px; font-size:.78rem; }
+  .btn.edit-batch-all{ border-color: var(--amber); color: var(--amber); padding:5px 10px; font-size:.78rem; }
   .tag-chip.dispatch{ background:#3a1414; border:1px solid var(--away); }
   .tag-chip.dispatch button{ color: var(--away); }
   .dispatch-type-icon{ margin-right:2px; }
@@ -386,9 +387,9 @@
 </div>
 
 <div class="panel-box dispatch">
-  <h3>快速出勤登記（勾選出勤人員後依案件類型標記圖示🚑🔥🚨；名單預設只列今日上班人員，找不到人可用「➕ 其他人員」；出勤登記後可依批次一起返隊）</h3>
+  <h3>快速出勤登記（勾選出勤人員後依案件類型標記圖示⚕️🔥🚨；名單預設只列今日上班人員，找不到人可用「➕ 其他人員」；出勤登記後可依批次一起返隊）</h3>
   <div class="dispatch-presets edit-only">
-    <button type="button" class="btn ghost" data-type="ems">🚑 救護（通常2-3人）</button>
+    <button type="button" class="btn ghost" data-type="ems">⚕️ 救護（通常2-3人）</button>
     <button type="button" class="btn ghost" data-type="fire">🔥 火警（通常2人）</button>
     <button type="button" class="btn ghost" data-type="other">🚨 其他（通常2-3人）</button>
     <button type="button" class="btn ghost" id="dispatchOtherPersonBtn">➕ 其他人員（名單找不到時使用）</button>
@@ -396,7 +397,7 @@
   <div id="dispatchPicker" class="dispatch-picker" style="display:none;">
     <div class="picker-mode-label" id="dispatchModeLabel"></div>
     <div class="dispatch-type-select" id="dispatchTypeSelect">
-      <label class="dispatch-check"><input type="radio" name="dispatchType" value="ems"> 🚑 救護</label>
+      <label class="dispatch-check"><input type="radio" name="dispatchType" value="ems"> ⚕️ 救護</label>
       <label class="dispatch-check"><input type="radio" name="dispatchType" value="fire"> 🔥 火警</label>
       <label class="dispatch-check"><input type="radio" name="dispatchType" value="other"> 🚨 其他</label>
     </div>
@@ -1324,6 +1325,7 @@ function renderDispatchOut(){
     return `<div class="dispatch-batch" data-batch="${bid}">
       <div class="dispatch-batch-head">
         <span class="label">${label}（${entries.length}人）</span>
+        <button type="button" class="btn edit-batch-all edit-only" data-edit-batch-all="${bid}">✏️ 整批修改</button>
         <button type="button" class="btn return-batch edit-only" data-return-batch="${bid}">🔄 整批返隊</button>
       </div>
       <div class="people">${peopleHtml}</div>
@@ -1336,7 +1338,7 @@ function renderDispatchOut(){
       const n = Number(btn.dataset.n);
       const bid = btn.dataset.batch;
       const entry = dispatchOut.find(d=>d.num===n && String(d.batchId)===bid);
-      const label = entry ? dispatchNotifyLabel(entry.type, entry.vehicles) : '';
+      const label = entry ? dispatchNotifyLabel(entry.type, entry.vehicles, '返隊') : '';
       dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
       renderAll();
       syncToCloud();
@@ -1349,12 +1351,20 @@ function renderDispatchOut(){
       editDispatchEntry(Number(btn.dataset.editN), btn.dataset.editBatch);
     });
   });
+  // Edit an entire batch at once (案件類型／車輛 apply to everyone in the batch;
+  // 不影響人員名單本身，要換人請用單筆的 ✏️ 編輯）。
+  wrap.querySelectorAll('button[data-edit-batch-all]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!unlocked) return;
+      editDispatchBatch(btn.dataset.editBatchAll);
+    });
+  });
   // Return an entire batch (everyone who went out together) at once.
   wrap.querySelectorAll('button[data-return-batch]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const bid = btn.dataset.returnBatch;
       const entries = byBatch[bid] || [];
-      const label = entries.length ? dispatchNotifyLabel(entries[0].type, entries[0].vehicles) : '這批';
+      const label = entries.length ? dispatchNotifyLabel(entries[0].type, entries[0].vehicles, '返隊') : '這批';
       const ok = await showConfirm(`確定要讓「${label}」這批 ${entries.length} 位人員一起返隊嗎？`);
       if(ok){
         dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
@@ -1542,14 +1552,14 @@ function sendPushNotification(title, body){
 }
 
 function notifyDispatch(entries, type, fromLocalAction, vehicles){
-  const label = dispatchNotifyLabel(type, vehicles);
+  const label = dispatchNotifyLabel(type, vehicles, '出勤'); // 例：🚑救護・出勤🚑91車
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
-  showToast(`🚨 已登記出勤・${label}`, names_, 'out'); // 本機畫面即時提示，不受下面的限制影響
+  showToast(label, names_, 'out'); // 本機畫面即時提示，不受下面的限制影響
   if(fromLocalAction) queuePushNotify('dispatch', entries, label);
 }
 function notifyReturn(entries, label, fromLocalAction){
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
-  showToast(`🔄 已返隊${label ? '・' + label : ''}`, names_, 'back');
+  showToast(label || '🔄 返隊', names_, 'back');
   if(fromLocalAction) queuePushNotify('return', entries, label);
 }
 function notifyTempOut(entries, fromLocalAction){
@@ -1585,11 +1595,13 @@ function flushPushNotify(kind){
   const label = bucket.label;
 
   if(kind === 'dispatch'){
-    pushSystemNotification(`出勤登記${label ? '・' + label : ''}`, names_);
-    sendPushNotification(`🚨 出勤登記${label ? '・' + label : ''}`, names_);
+    const title = label || '出勤登記';
+    pushSystemNotification(title, names_);
+    sendPushNotification(title, names_);
   } else if(kind === 'return'){
-    pushSystemNotification(`返隊${label ? '・' + label : ''}`, names_);
-    sendPushNotification(`🔄 返隊${label ? '・' + label : ''}`, names_);
+    const title = label || '🔄 返隊';
+    pushSystemNotification(title, names_);
+    sendPushNotification(title, names_);
   } else if(kind === 'tempOut'){
     pushSystemNotification('外出登記', names_);
     sendPushNotification('🚶 外出登記', names_);
@@ -1631,7 +1643,7 @@ function diffDispatchOut(prev, next){
   const removedByBatch = {};
   removed.forEach(d=>{ (removedByBatch[d.batchId] = removedByBatch[d.batchId] || []).push(d); });
   Object.values(removedByBatch).forEach(entries=>{
-    const label = dispatchNotifyLabel(entries[0].type, entries[0].vehicles);
+    const label = dispatchNotifyLabel(entries[0].type, entries[0].vehicles, '返隊');
     notifyReturn(entries.map(e=>e.num), label);
   });
 
@@ -1787,6 +1799,53 @@ function editDispatchEntry(num, batchId){
   setCheckedVehicles('editDispatchVehicles', entry.vehicles || []);
 }
 
+// 整批修改：一次把「同一次出勤登記」整批人員的案件類型／車輛改成一樣的，
+// 不用一個一個改。只改案件類型跟車輛，不動人員名單本身（要換人／新增／
+// 移除人員請用單筆的 ✏️ 編輯，或整批返隊後重新登記）。
+function editDispatchBatch(bid){
+  const entries = dispatchOut.filter(d=>String(d.batchId)===String(bid));
+  if(!entries.length) return;
+  const firstType = entries[0].type;
+  const firstVehicles = entries[0].vehicles || [];
+  const namesText = entries.map(e=>`${e.num} ${names[e.num]||'?'}`).join('、');
+  const typeOptions = Object.keys(presetLabels).map(t=>
+    `<label class="dispatch-check"><input type="radio" name="editBatchType" value="${t}" ${t===firstType?'checked':''}> ${presetLabels[t]}</label>`
+  ).join('');
+  const body = `
+    <div style="margin-bottom:10px;font-size:.85rem;color:var(--dim2);">套用到整批（${entries.length}人）：${esc(namesText)}</div>
+    <div class="dispatch-type-select" id="editBatchTypeSelect" style="margin-bottom:10px;">${typeOptions}</div>
+    <div style="font-size:.85rem;color:var(--dim2);margin-bottom:6px;">車輛（可複選，套用到整批）</div>
+    <div id="editBatchVehicles" class="vehicle-select">${vehicleCheckboxesHtml()}</div>
+  `;
+  openEditModal('整批修改出勤登記', body, ()=>{
+    const typeInput = document.querySelector('#editBatchTypeSelect input:checked');
+    const newType = typeInput ? typeInput.value : firstType;
+    const newVehicles = getCheckedVehicles('editBatchVehicles');
+    const oldType = firstType, oldVehicles = firstVehicles;
+    dispatchOut.forEach(d=>{
+      if(String(d.batchId)===String(bid)){ d.type = newType; d.vehicles = [...newVehicles]; }
+    });
+    renderAll();
+    syncToCloud();
+    notifyBatchEditToast(entries, oldType, newType, oldVehicles, newVehicles);
+  });
+  setCheckedVehicles('editBatchVehicles', firstVehicles);
+}
+// 整批修改的通知：跟單筆修改共用同一套頁面橫幅＋手機推播，內文列出這批
+// 所有人員，讓大家一眼看出是哪一批被整批改掉，改成了什麼車輛／類型。
+function notifyBatchEditToast(entries, oldType, newType, oldVehicles, newVehicles){
+  const namesText = entries.map(e=>`${e.num} ${names[e.num]||'?'}`).join('、');
+  const parts = [`人員：${namesText}`];
+  const oldV = fmtVehicles(oldVehicles), newV = fmtVehicles(newVehicles);
+  if(oldV !== newV) parts.push(`車輛：${oldV} → ${newV}`);
+  if(oldType !== newType) parts.push(`類型：${presetLabels[oldType]} → ${presetLabels[newType]}`);
+  const body = parts.join('　｜　');
+  const title = `✏️ 出勤登記已整批修改（${entries.length}人）`;
+  showToast(title, body, 'out');
+  pushSystemNotification(title, body);
+  sendPushNotification(title, body);
+}
+
 // 編輯「代班登記」中的一筆：可改代班人／被代班人番號。
 function editSubstEntry(i){
   const s = substitutions[i];
@@ -1885,8 +1944,8 @@ async function addSubst(){
 // station. Each batch has its own "整批返隊" button so a group that went out
 // together on the same case can come back together, without affecting any
 // other batch that's still out.
-const presetLabels = { ems:'🚑 救護', fire:'🔥 火警', other:'🚨 其他' };
-const presetIcons  = { ems:'🚑', fire:'🔥', other:'🚨' };
+const presetLabels = { ems:'⚕️ 救護', fire:'🔥 火警', other:'🚨 其他' };
+const presetIcons  = { ems:'⚕️', fire:'🔥', other:'🚨' };
 // 出勤案件類型對應的「車輛類別＋圖示」，跟實際勾選的車輛號碼組合成通知文字，
 // 例如救護會顯示「救護車🚑（91車）救護」，火警「消防車🚒（11車）火警」。
 // 沒有固定車輛類別的「其他」案件類型，就不加類別名稱，直接顯示「🚨（41車）其他」。
@@ -1896,10 +1955,14 @@ const presetVehicleCat = {
   other:{name:'',       icon:'🚨'}
 };
 const presetTypeText = { ems:'救護', fire:'火警', other:'其他' };
-function dispatchNotifyLabel(type, vehicles){
-  const cat = presetVehicleCat[type] || {name:'', icon:presetIcons[type] || ''};
-  const vehText = (vehicles && vehicles.length) ? `（${vehicles.map(id => (VEHICLE_MAP[id] ? VEHICLE_MAP[id].label : id)).join('、')}）` : '';
-  return `${cat.name}${cat.icon}${vehText}${presetTypeText[type] || '出勤'}`;
+// 通知標題統一格式：{案件類型圖示}{案件類型}・{出勤／返隊}{車輛圖示}{車號}
+// 例如救護出勤91車：🚑救護・出勤🚑91車；火警返隊11車：🔥火警・返隊🚒11車。
+function dispatchNotifyLabel(type, vehicles, action){
+  const icon = presetIcons[type] || '';
+  const typeText = presetTypeText[type] || '出勤';
+  const cat = presetVehicleCat[type] || {icon: icon};
+  const vehText = (vehicles && vehicles.length) ? vehicles.map(id => (VEHICLE_MAP[id] ? VEHICLE_MAP[id].label : id)).join('、') : '';
+  return `${icon}${typeText}・${action || '出勤'}${cat.icon}${vehText}`;
 }
 document.querySelectorAll('.dispatch-presets button[data-type]').forEach(btn=>{
   btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type, false); });
