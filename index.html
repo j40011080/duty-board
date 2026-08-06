@@ -121,6 +121,13 @@
   .dispatch-type-select input{ cursor:pointer; }
   .dispatch-check{ display:flex; align-items:center; gap:5px; cursor:pointer; }
   .dispatch-check input{ cursor:pointer; }
+  .vehicle-select{ display:flex; flex-wrap:wrap; gap:10px 18px; margin-bottom:10px; }
+  .vehicle-group{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#00000030; border:1px solid #ffffff14; border-radius:8px; padding:6px 10px; }
+  .vehicle-group-label{ font-size:.72rem; color:var(--dim2); letter-spacing:1px; margin-right:2px; }
+  .vehicle-check{ display:flex; align-items:center; gap:4px; cursor:pointer; font-size:.88rem; }
+  .vehicle-check input{ cursor:pointer; }
+  .edit-btn{ opacity:.85; }
+  .tag-chip small{ opacity:.8; font-size:.78em; margin-left:2px; }
   .btn.return-all{ border-color: var(--red); color: var(--red); }
   .btn.ghost{ background:transparent; }
 
@@ -282,6 +289,7 @@
     background: var(--red); color:#fff; font-weight:900; padding:4px 15px;
     border-radius:6px; font-size:.95em; letter-spacing:1px;
   }
+  .car-tag.out-vehicle-tag{ background: var(--away); color:#2a0d0d; }
   .room-tag{
     background:#20304a; border:1px solid #3a527a; color:#8fa8cc;
     padding:2px 9px; border-radius:6px; font-size:.8em; font-weight:500;
@@ -367,6 +375,8 @@
   <div id="tempOutPicker" class="dispatch-picker" style="display:none;">
     <div class="picker-mode-label" id="tempOutModeLabel"></div>
     <div id="tempOutCheckboxes" class="dispatch-checkboxes"></div>
+    <div class="picker-mode-label">🚗 選擇車輛（可複選，非必填）</div>
+    <div id="tempOutVehicleSelect" class="vehicle-select"></div>
     <div class="inrow">
       <button type="button" class="btn primary" id="tempOutConfirm">✓ 確定外出</button>
       <button type="button" class="btn" id="tempOutCancel">取消</button>
@@ -391,6 +401,8 @@
       <label class="dispatch-check"><input type="radio" name="dispatchType" value="other"> 🚨 其他</label>
     </div>
     <div id="dispatchCheckboxes" class="dispatch-checkboxes"></div>
+    <div class="picker-mode-label">🚗 選擇車輛（可複選；救護會自動預選91車，91車已出動時改預選92車）</div>
+    <div id="dispatchVehicleSelect" class="vehicle-select"></div>
     <div class="inrow">
       <button type="button" class="btn primary" id="dispatchConfirm">✓ 確定出勤</button>
       <button type="button" class="btn" id="dispatchCancel">取消</button>
@@ -427,6 +439,17 @@
     <div class="modal-actions">
       <button type="button" class="btn" id="modalCancel">取消</button>
       <button type="button" class="btn primary" id="modalOk">確定</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-msg" id="editModalTitle" style="margin-bottom:10px; font-weight:700;"></div>
+    <div id="editModalBody"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="editModalCancel">取消</button>
+      <button type="button" class="btn primary" id="editModalOk">儲存</button>
     </div>
   </div>
 </div>
@@ -540,7 +563,7 @@ let names = {...defaultNames};
 let titles = {...defaultTitles};
 let schedule = defaultSchedule.map(r=>({...r, pos:{...r.pos}}));
 let otherDuty = defaultOtherDuty.map(g=>({...g}));
-let tempOut = [];       // numbers manually entered via 暫時外出登記 (individually removable)
+let tempOut = [];       // [{num, vehicles:[]}] entries manually entered via 暫時外出登記 (individually removable)
 let dispatchOut = [];   // [{num, type, batchId}] numbers checked off via 快速出勤登記, grouped by which confirm click added them
 let dispatchBatchSeq = 0; // increments once per confirmDispatch() call, so a batch of 2-3 people checked off together can later return together
 let substitutions = []; // [{from:X, to:Y}] X substitutes for Y (ranks swapped)
@@ -642,8 +665,10 @@ function applyRemoteState(state){
   // 判斷，遇到「清空」這個狀態就會被誤判成「雲端沒給值、不用更新」，導致
   // 其他裝置永遠卡在舊資料（甚至是頁面裡寫死的示範資料）。
   otherDuty = state.otherDuty || [];
-  tempOut = state.tempOut || [];
-  dispatchOut = state.dispatchOut || [];
+  // 相容舊資料：早期版本 tempOut 只存番號（number），沒有車輛欄位；這裡統一
+  // 轉成 {num, vehicles:[]} 物件格式，新舊資料都能正常顯示、編輯。
+  tempOut = (state.tempOut || []).map(t => (t && typeof t === 'object') ? {num:t.num, vehicles:t.vehicles||[]} : {num:t, vehicles:[]});
+  dispatchOut = (state.dispatchOut || []).map(d => ({...d, vehicles: d.vehicles||[]}));
   dispatchBatchSeq = state.dispatchBatchSeq || 0;
   substitutions = state.substitutions || [];
   if(state.supervisorNum !== undefined) supervisorNum = state.supervisorNum;
@@ -736,10 +761,69 @@ function buildCarMap(list){
   return map;
 }
 
+// ================= 車輛清單（外出／出勤 勾選用） =================
+// 每種車輛給一個獨立圖示，方便在人員名字上方一眼辨識實際出動的是哪一輛車，
+// 跟 CAR_LABELS（依順位分配的車輛崗位）是兩回事：那個是「編制崗位」，
+// 這裡是「這次出勤／外出實際開走的車」。
+const VEHICLES = [
+  {id:'91', label:'91車', icon:'🚑', group:'救護車'},
+  {id:'92', label:'92車', icon:'🚑', group:'救護車'},
+  {id:'71', label:'71車', icon:'🧰', group:'器材車'},
+  {id:'11', label:'11車', icon:'🚒', group:'消防車'},
+  {id:'12', label:'12車', icon:'🚒', group:'消防車'},
+  {id:'13', label:'13車', icon:'🚒', group:'消防車'},
+  {id:'62', label:'62車', icon:'🚛', group:'水庫車'},
+  {id:'65', label:'65車', icon:'🚛', group:'水庫車'},
+  {id:'31', label:'31車', icon:'🪜', group:'雲梯車'},
+  {id:'32', label:'32車', icon:'🪜', group:'雲梯車'},
+  {id:'45', label:'45車', icon:'🤖', group:'機器人'},
+  {id:'41', label:'41車', icon:'🚙', group:'勤務車'},
+  {id:'42', label:'42車', icon:'🚙', group:'勤務車'},
+  {id:'43', label:'43車', icon:'🚙', group:'勤務車'},
+  {id:'moto', label:'機車', icon:'🏍️', group:'機車'},
+];
+const VEHICLE_MAP = {}; VEHICLES.forEach(v=>{ VEHICLE_MAP[v.id] = v; });
+function vehicleLabel(id){ const v = VEHICLE_MAP[id]; return v ? (v.icon + v.label) : id; }
+function fmtVehicles(arr){ return (arr && arr.length) ? arr.map(vehicleLabel).join('、') : '（無）'; }
+// 產生車輛勾選清單 HTML（依類別分組），外出登記／出勤登記／編輯用的三個
+// picker 共用同一份清單，各自用不同容器 id 裝、互不影響彼此的勾選狀態。
+function vehicleCheckboxesHtml(){
+  const groups = {};
+  VEHICLES.forEach(v=>{ (groups[v.group] = groups[v.group] || []).push(v); });
+  return Object.keys(groups).map(g=>{
+    const items = groups[g].map(v=>`<label class="vehicle-check"><input type="checkbox" value="${v.id}"> ${v.icon} ${v.label}</label>`).join('');
+    return `<div class="vehicle-group"><span class="vehicle-group-label">${esc(g)}</span>${items}</div>`;
+  }).join('');
+}
+function getCheckedVehicles(containerId){
+  const el = document.getElementById(containerId);
+  if(!el) return [];
+  return Array.from(el.querySelectorAll('input[type=checkbox]:checked')).map(cb=>cb.value);
+}
+function setCheckedVehicles(containerId, ids){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  ids = ids || [];
+  el.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked = ids.includes(cb.value); });
+}
+// 判斷某輛車目前是否已經隨出勤／外出人員開出去，尚未返隊。
+function isVehicleOut(id){
+  return dispatchOut.some(d=>(d.vehicles||[]).includes(id)) || tempOut.some(t=>(t.vehicles||[]).includes(id));
+}
+// 人員目前實際帶出去的車輛（出勤或外出登記時勾選的），用來疊加顯示在
+// 名字上方原本的崗位車輛圖示後面。
+function assignedVehicleLabel(n){
+  const d = dispatchOut.find(x=>x.num===n);
+  if(d && d.vehicles && d.vehicles.length) return fmtVehicles(d.vehicles);
+  const t = tempOut.find(x=>x.num===n);
+  if(t && t.vehicles && t.vehicles.length) return fmtVehicles(t.vehicles);
+  return null;
+}
+
 // A person shows the ❌ mark on their chip if they're out via EITHER route —
 // manually entered (tempOut) or checked off through quick dispatch (dispatchOut).
 function isMarkedOut(n){
-  return tempOut.includes(n) || dispatchOut.some(d=>d.num===n);
+  return tempOut.some(t=>t.num===n) || dispatchOut.some(d=>d.num===n);
 }
 
 // "今日上班番號": union of the explicit roster line from the imported sheet
@@ -1009,7 +1093,7 @@ function isConscript(n){
 function outMarkHtml(n){
   const dispatchEntry = dispatchOut.find(d=>d.num===n);
   if(dispatchEntry) return `<span class="out-mark">${presetIcons[dispatchEntry.type] || '❌'}</span>`;
-  if(tempOut.includes(n)) return '<span class="out-mark">❌</span>';
+  if(tempOut.some(t=>t.num===n)) return '<span class="out-mark">❌</span>';
   return '';
 }
 // 值班人員／當日主管共用的顯示片段（含番號、姓名、房號、外出標記），
@@ -1042,7 +1126,11 @@ function chip(n, ord, opts){
   const outMark = outMarkHtml(n);
   const carLbl = opts.carMap ? opts.carMap[n] : null;
   const room = roomNumbers[n];
-  const carHtml = carLbl ? `<span class="chip-meta car-meta"><span class="car-tag">${esc(carLbl)}</span></span>` : '';
+  // 出勤／外出時實際帶出去的車輛，疊加顯示在原本崗位車輛圖示後面
+  // （例如原本是「91車」崗位，出勤後變成「91車 🚑91車」）。
+  const outVehicle = assignedVehicleLabel(n);
+  const outVehicleHtml = outVehicle ? `<span class="car-tag out-vehicle-tag">${esc(outVehicle)}</span>` : '';
+  const carHtml = (carLbl || outVehicle) ? `<span class="chip-meta car-meta">${carLbl ? `<span class="car-tag">${esc(carLbl)}</span>` : ''}${outVehicleHtml}</span>` : '';
   const roomHtml = room ? `<span class="chip-meta room-meta"><span class="room-tag">${esc(room)}房</span></span>` : '';
   return `<span class="${chipCls.join(' ')}">${carHtml}<span class="chip-row1">${ordHtml}<span class="num">${p.num}</span><span class="${nameCls.join(' ')}">${p.name}</span>${outMark}</span>${roomHtml}</span>`;
 }
@@ -1164,17 +1252,24 @@ function renderList(){
 function renderTempOut(){
   const wrap = document.getElementById('tempOutList');
   if(!tempOut.length){ wrap.innerHTML = '<span class="chip empty">目前無人登記外出</span>'; return; }
-  wrap.innerHTML = tempOut.map(n=>{
-    const p = P(n);
-    return `<span class="tag-chip out">${p.num} ${p.name}<button class="edit-only" data-n="${n}">✕</button></span>`;
+  wrap.innerHTML = tempOut.map(entry=>{
+    const p = P(entry.num);
+    const vehHtml = (entry.vehicles && entry.vehicles.length) ? `<span class="dispatch-type-icon">${entry.vehicles.map(v=>VEHICLE_MAP[v]?VEHICLE_MAP[v].icon:'').join('')}</span>` : '';
+    return `<span class="tag-chip out">${vehHtml}${p.num} ${p.name}${entry.vehicles&&entry.vehicles.length?` <small>(${esc(fmtVehicles(entry.vehicles))})</small>`:''}<button class="edit-only edit-btn" data-edit-n="${entry.num}" title="編輯">✏️</button><button class="edit-only" data-n="${entry.num}">✕</button></span>`;
   }).join('');
-  wrap.querySelectorAll('button').forEach(btn=>{
+  wrap.querySelectorAll('button[data-n]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const n = Number(btn.dataset.n);
-      tempOut = tempOut.filter(x=>x!==n);
+      tempOut = tempOut.filter(x=>x.num!==n);
       renderAll();
       syncToCloud();
       notifyReturn([n], '', true);
+    });
+  });
+  wrap.querySelectorAll('button[data-edit-n]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!unlocked) return;
+      editTempOutEntry(Number(btn.dataset.editN));
     });
   });
 }
@@ -1184,14 +1279,20 @@ function renderSubst(){
   if(!substitutions.length){ wrap.innerHTML = '<span class="chip empty">目前無代班登記</span>'; return; }
   wrap.innerHTML = substitutions.map((s,i)=>{
     const pf = P(s.from), pt = P(s.to);
-    return `<span class="tag-chip sub">${pf.num} ${pf.name} 代 ${pt.num} ${pt.name}<button class="edit-only" data-i="${i}">✕</button></span>`;
+    return `<span class="tag-chip sub">${pf.num} ${pf.name} 代 ${pt.num} ${pt.name}<button class="edit-only edit-btn" data-edit-i="${i}" title="編輯">✏️</button><button class="edit-only" data-i="${i}">✕</button></span>`;
   }).join('');
-  wrap.querySelectorAll('button').forEach(btn=>{
+  wrap.querySelectorAll('button[data-i]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const i = Number(btn.dataset.i);
       substitutions.splice(i,1);
       renderAll();
       syncToCloud();
+    });
+  });
+  wrap.querySelectorAll('button[data-edit-i]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!unlocked) return;
+      editSubstEntry(Number(btn.dataset.editI));
     });
   });
 }
@@ -1212,10 +1313,11 @@ function renderDispatchOut(){
     const entries = byBatch[bid];
     const type = entries[0].type;
     const label = presetLabels[type] || '出勤';
-    const peopleHtml = entries.map(({num,type})=>{
+    const peopleHtml = entries.map(({num,type,vehicles})=>{
       const p = P(num);
       const icon = presetIcons[type] || '';
-      return `<span class="tag-chip dispatch"><span class="dispatch-type-icon">${icon}</span>${p.num} ${p.name}<button class="edit-only" data-n="${num}" data-batch="${bid}">✕</button></span>`;
+      const vehTxt = (vehicles && vehicles.length) ? ` <small>(${esc(fmtVehicles(vehicles))})</small>` : '';
+      return `<span class="tag-chip dispatch"><span class="dispatch-type-icon">${icon}</span>${p.num} ${p.name}${vehTxt}<button class="edit-only edit-btn" data-edit-n="${num}" data-edit-batch="${bid}" title="編輯">✏️</button><button class="edit-only" data-n="${num}" data-batch="${bid}">✕</button></span>`;
     }).join('');
     return `<div class="dispatch-batch" data-batch="${bid}">
       <div class="dispatch-batch-head">
@@ -1231,10 +1333,18 @@ function renderDispatchOut(){
     btn.addEventListener('click', ()=>{
       const n = Number(btn.dataset.n);
       const bid = btn.dataset.batch;
+      const entry = dispatchOut.find(d=>d.num===n && String(d.batchId)===bid);
+      const label = entry ? dispatchNotifyLabel(entry.type, entry.vehicles) : '';
       dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
       renderAll();
       syncToCloud();
-      notifyReturn([n], '', true);
+      notifyReturn([n], label, true);
+    });
+  });
+  wrap.querySelectorAll('button[data-edit-n]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!unlocked) return;
+      editDispatchEntry(Number(btn.dataset.editN), btn.dataset.editBatch);
     });
   });
   // Return an entire batch (everyone who went out together) at once.
@@ -1242,7 +1352,7 @@ function renderDispatchOut(){
     btn.addEventListener('click', async ()=>{
       const bid = btn.dataset.returnBatch;
       const entries = byBatch[bid] || [];
-      const label = presetLabels[entries[0] ? entries[0].type : ''] || '這批';
+      const label = entries.length ? dispatchNotifyLabel(entries[0].type, entries[0].vehicles) : '這批';
       const ok = await showConfirm(`確定要讓「${label}」這批 ${entries.length} 位人員一起返隊嗎？`);
       if(ok){
         dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
@@ -1429,8 +1539,8 @@ function sendPushNotification(title, body){
   }).catch(err=> console.warn('讀取裝置清單失敗', err));
 }
 
-function notifyDispatch(entries, type, fromLocalAction){
-  const label = presetLabels[type] || '出勤';
+function notifyDispatch(entries, type, fromLocalAction, vehicles){
+  const label = dispatchNotifyLabel(type, vehicles);
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(`🚨 已登記出勤・${label}`, names_, 'out'); // 本機畫面即時提示，不受下面的限制影響
   if(fromLocalAction) queuePushNotify('dispatch', entries, label);
@@ -1489,10 +1599,19 @@ function flushPushNotify(kind){
 // 比對，找出「多出來的」（剛出勤／外出）跟「消失的」（剛返隊）番號，
 // 補跳通知——這樣不管是哪台裝置動的手，其他每台裝置都會收到提醒。
 function diffTempOut(prev, next){
-  const added = next.filter(n=>!prev.includes(n));
-  const removed = prev.filter(n=>!next.includes(n));
+  const prevNums = prev.map(t=>t.num);
+  const nextNums = next.map(t=>t.num);
+  const added = next.filter(t=>!prevNums.includes(t.num)).map(t=>t.num);
+  const removed = prev.filter(t=>!nextNums.includes(t.num)).map(t=>t.num);
   if(added.length) notifyTempOut(added);
   if(removed.length) notifyReturn(removed);
+  // 同一個人還留在名單裡，但番號或車輛被其他裝置改過——補跳「已修改」通知。
+  next.forEach(t=>{
+    const p = prev.find(x=>x.num===t.num);
+    if(p && fmtVehicles(p.vehicles) !== fmtVehicles(t.vehicles)){
+      notifyEditToast('外出登記', null, null, p.vehicles, t.vehicles);
+    }
+  });
 }
 function diffDispatchOut(prev, next){
   const key = d=> d.num + '|' + d.batchId;
@@ -1504,14 +1623,25 @@ function diffDispatchOut(prev, next){
   const addedByBatch = {};
   added.forEach(d=>{ (addedByBatch[d.batchId] = addedByBatch[d.batchId] || []).push(d); });
   Object.values(addedByBatch).forEach(entries=>{
-    notifyDispatch(entries.map(e=>e.num), entries[0].type);
+    notifyDispatch(entries.map(e=>e.num), entries[0].type, false, entries[0].vehicles);
   });
 
   const removedByBatch = {};
   removed.forEach(d=>{ (removedByBatch[d.batchId] = removedByBatch[d.batchId] || []).push(d); });
   Object.values(removedByBatch).forEach(entries=>{
-    const label = presetLabels[entries[0].type] || '';
+    const label = dispatchNotifyLabel(entries[0].type, entries[0].vehicles);
     notifyReturn(entries.map(e=>e.num), label);
+  });
+
+  // 同一個人、同一批次仍在名單裡，但其他裝置改了車輛或案件類型——補跳「已修改」通知。
+  next.forEach(d=>{
+    const p = prev.find(x=>x.num===d.num && x.batchId===d.batchId);
+    if(!p) return;
+    const vehChanged = fmtVehicles(p.vehicles) !== fmtVehicles(d.vehicles);
+    const typeChanged = p.type !== d.type;
+    if(vehChanged || typeChanged){
+      notifyEditToast('出勤登記', null, null, p.vehicles, d.vehicles, typeChanged ? {from:presetLabels[p.type],to:presetLabels[d.type]} : null);
+    }
   });
 }
 function openModal(msg, isConfirm, resolve){
@@ -1533,6 +1663,157 @@ function openModal(msg, isConfirm, resolve){
   cancelBtn.addEventListener('click', onCancel);
 }
 
+// ================= 編輯 Modal（外出／出勤／代班 共用） =================
+// 通用的「編輯」彈窗：呼叫端自行組出 body 內容（人員下拉、車輛勾選…），
+// 按「儲存」時執行呼叫端傳入的 onSave callback（在裡面自行讀值、更新資料、
+// renderAll／syncToCloud／跳修改通知）。
+let editModalSaveCallback = null;
+function openEditModal(title, bodyHtml, onSave){
+  document.getElementById('editModalTitle').textContent = title;
+  document.getElementById('editModalBody').innerHTML = bodyHtml;
+  document.getElementById('editModalOverlay').style.display = 'flex';
+  editModalSaveCallback = onSave;
+}
+function closeEditModal(){
+  document.getElementById('editModalOverlay').style.display = 'none';
+  editModalSaveCallback = null;
+}
+document.getElementById('editModalCancel').addEventListener('click', closeEditModal);
+document.getElementById('editModalOk').addEventListener('click', ()=>{
+  const cb = editModalSaveCallback;
+  closeEditModal();
+  if(cb) cb();
+});
+
+const EDIT_SELECT_STYLE = 'width:100%;padding:8px;border-radius:6px;background:#00000055;border:1px solid #ffffff28;color:var(--text);font-family:inherit;';
+
+// 修改通知：跟「已登記／已返隊」的即時提醒共用同一套頁面橫幅＋手機推播，
+// 內容改成「人員：舊 → 新」「車輛：舊 → 新」「類型：舊 → 新」，讓大家一眼
+// 看出這筆外出／出勤登記被改成什麼樣子，而不只是「有異動」。
+function notifyEditToast(kind, oldNum, newNum, oldVehicles, newVehicles, typeChange){
+  const parts = [];
+  if(oldNum !== null && newNum !== null && oldNum !== newNum){
+    parts.push(`人員：${oldNum} ${names[oldNum]||'?'} → ${newNum} ${names[newNum]||'?'}`);
+  }
+  const oldV = fmtVehicles(oldVehicles), newV = fmtVehicles(newVehicles);
+  if(oldV !== newV) parts.push(`車輛：${oldV} → ${newV}`);
+  if(typeChange && typeChange.from !== typeChange.to) parts.push(`類型：${typeChange.from} → ${typeChange.to}`);
+  if(!parts.length) return;
+  const body = parts.join('　｜　');
+  showToast(`✏️ ${kind}已修改`, body, 'out');
+  pushSystemNotification(`✏️ ${kind}已修改`, body);
+  sendPushNotification(`✏️ ${kind}已修改`, body);
+}
+function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
+  const oldStr = `${oldFrom} ${names[oldFrom]||'?'} 代 ${oldTo} ${names[oldTo]||'?'}`;
+  const newStr = `${newFrom} ${names[newFrom]||'?'} 代 ${newTo} ${names[newTo]||'?'}`;
+  if(oldStr === newStr) return;
+  const body = `${oldStr} → ${newStr}`;
+  showToast('✏️ 代班登記已修改', body, 'out');
+  pushSystemNotification('✏️ 代班登記已修改', body);
+  sendPushNotification('✏️ 代班登記已修改', body);
+}
+
+// 編輯「暫時外出登記」中的一筆：可改成別的人員、也可改勾選的車輛。
+function editTempOutEntry(num){
+  const entry = tempOut.find(t=>t.num===num);
+  if(!entry) return;
+  const roster = getAllPersonnelNums();
+  const personOptions = roster.map(n=>`<option value="${n}" ${n===num?'selected':''}>${n} ${names[n]}</option>`).join('');
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label style="font-size:.85rem;color:var(--dim2);">人員</label><br>
+      <select id="editTempOutPerson" style="${EDIT_SELECT_STYLE}">${personOptions}</select>
+    </div>
+    <div style="font-size:.85rem;color:var(--dim2);margin-bottom:6px;">車輛（可複選）</div>
+    <div id="editTempOutVehicles" class="vehicle-select">${vehicleCheckboxesHtml()}</div>
+  `;
+  openEditModal('編輯外出登記', body, ()=>{
+    const newNum = Number(document.getElementById('editTempOutPerson').value);
+    const newVehicles = getCheckedVehicles('editTempOutVehicles');
+    const oldNum = entry.num, oldVehicles = entry.vehicles || [];
+    if(newNum !== oldNum && tempOut.some(t=>t.num===newNum)){
+      showAlert('這位人員已經在外出名單中，請選擇其他人員。');
+      return;
+    }
+    entry.num = newNum;
+    entry.vehicles = newVehicles;
+    renderAll();
+    syncToCloud();
+    notifyEditToast('外出登記', oldNum, newNum, oldVehicles, newVehicles);
+  });
+  setCheckedVehicles('editTempOutVehicles', entry.vehicles || []);
+}
+
+// 編輯「快速出勤登記」中的一筆：可改人員、案件類型、車輛（僅影響這一筆，
+// 同批次其他人員不受影響）。
+function editDispatchEntry(num, batchId){
+  const entry = dispatchOut.find(d=>d.num===num && String(d.batchId)===String(batchId));
+  if(!entry) return;
+  const roster = getAllPersonnelNums();
+  const personOptions = roster.map(n=>`<option value="${n}" ${n===num?'selected':''}>${n} ${names[n]}</option>`).join('');
+  const typeOptions = Object.keys(presetLabels).map(t=>
+    `<label class="dispatch-check"><input type="radio" name="editDispatchType" value="${t}" ${t===entry.type?'checked':''}> ${presetLabels[t]}</label>`
+  ).join('');
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label style="font-size:.85rem;color:var(--dim2);">人員</label><br>
+      <select id="editDispatchPerson" style="${EDIT_SELECT_STYLE}">${personOptions}</select>
+    </div>
+    <div class="dispatch-type-select" id="editDispatchTypeSelect" style="margin-bottom:10px;">${typeOptions}</div>
+    <div style="font-size:.85rem;color:var(--dim2);margin-bottom:6px;">車輛（可複選）</div>
+    <div id="editDispatchVehicles" class="vehicle-select">${vehicleCheckboxesHtml()}</div>
+  `;
+  openEditModal('編輯出勤登記', body, ()=>{
+    const newNum = Number(document.getElementById('editDispatchPerson').value);
+    if(newNum !== entry.num && dispatchOut.some(d=>d.num===newNum)){
+      showAlert('這位人員已經在出勤名單中，請選擇其他人員。');
+      return;
+    }
+    const typeInput = document.querySelector('#editDispatchTypeSelect input:checked');
+    const newType = typeInput ? typeInput.value : entry.type;
+    const newVehicles = getCheckedVehicles('editDispatchVehicles');
+    const oldNum = entry.num, oldType = entry.type, oldVehicles = entry.vehicles || [];
+    entry.num = newNum;
+    entry.type = newType;
+    entry.vehicles = newVehicles;
+    renderAll();
+    syncToCloud();
+    notifyEditToast('出勤登記', oldNum, newNum, oldVehicles, newVehicles,
+      oldType !== newType ? {from:presetLabels[oldType], to:presetLabels[newType]} : null);
+  });
+  setCheckedVehicles('editDispatchVehicles', entry.vehicles || []);
+}
+
+// 編輯「代班登記」中的一筆：可改代班人／被代班人番號。
+function editSubstEntry(i){
+  const s = substitutions[i];
+  if(!s) return;
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label style="font-size:.85rem;color:var(--dim2);">代班人番號</label><br>
+      <input type="text" id="editSubFrom" value="${s.from}" inputmode="numeric" style="${EDIT_SELECT_STYLE}">
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:var(--dim2);">被代班人番號</label><br>
+      <input type="text" id="editSubTo" value="${s.to}" inputmode="numeric" style="${EDIT_SELECT_STYLE}">
+    </div>
+  `;
+  openEditModal('編輯代班登記', body, async ()=>{
+    const newFrom = Number(document.getElementById('editSubFrom').value.trim());
+    const newTo = Number(document.getElementById('editSubTo').value.trim());
+    if(!newFrom || !names[newFrom] || !newTo || !names[newTo] || newFrom===newTo){
+      await showAlert('請輸入正確的代班人與被代班人番號。');
+      return;
+    }
+    const oldFrom = s.from, oldTo = s.to;
+    s.from = newFrom; s.to = newTo;
+    renderAll();
+    syncToCloud();
+    notifySubstEditToast(oldFrom, oldTo, newFrom, newTo);
+  });
+}
+
 // ================= TEMP-OUT PICKER (暫時外出登記) =================
 document.getElementById('tempOutPickBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(false); });
 document.getElementById('tempOutOtherBtn').addEventListener('click', ()=>{ if(unlocked) openTempOutPicker(true); });
@@ -1552,6 +1833,7 @@ function openTempOutPicker(useAll){
   const modeLabel = document.getElementById('tempOutModeLabel');
   modeLabel.textContent = useAll ? '目前顯示：全部人員（不限今日上班名單）' : '目前顯示：今日上班人員';
   modeLabel.className = 'picker-mode-label' + (useAll ? ' all' : '');
+  document.getElementById('tempOutVehicleSelect').innerHTML = vehicleCheckboxesHtml();
   document.getElementById('tempOutPicker').style.display = 'block';
 }
 function closeTempOutPicker(){
@@ -1560,10 +1842,11 @@ function closeTempOutPicker(){
 async function confirmTempOut(){
   const checks = document.querySelectorAll('#tempOutCheckboxes input[type=checkbox]:checked');
   if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
+  const vehicles = getCheckedVehicles('tempOutVehicleSelect');
   const addedNums = [];
   checks.forEach(cb=>{
     const n = Number(cb.value);
-    if(!tempOut.includes(n)){ tempOut.push(n); addedNums.push(n); }
+    if(!tempOut.some(t=>t.num===n)){ tempOut.push({num:n, vehicles:[...vehicles]}); addedNums.push(n); }
   });
   closeTempOutPicker();
   renderAll();
@@ -1602,6 +1885,20 @@ async function addSubst(){
 // other batch that's still out.
 const presetLabels = { ems:'🚑 救護', fire:'🔥 火警', other:'🚨 其他' };
 const presetIcons  = { ems:'🚑', fire:'🔥', other:'🚨' };
+// 出勤案件類型對應的「車輛類別＋圖示」，跟實際勾選的車輛號碼組合成通知文字，
+// 例如救護會顯示「救護車🚑（91車）救護」，火警「消防車🚒（11車）火警」。
+// 沒有固定車輛類別的「其他」案件類型，就不加類別名稱，直接顯示「🚨（41車）其他」。
+const presetVehicleCat = {
+  ems:  {name:'救護車', icon:'🚑'},
+  fire: {name:'消防車', icon:'🚒'},
+  other:{name:'',       icon:'🚨'}
+};
+const presetTypeText = { ems:'救護', fire:'火警', other:'其他' };
+function dispatchNotifyLabel(type, vehicles){
+  const cat = presetVehicleCat[type] || {name:'', icon:presetIcons[type] || ''};
+  const vehText = (vehicles && vehicles.length) ? `（${vehicles.map(id => (VEHICLE_MAP[id] ? VEHICLE_MAP[id].label : id)).join('、')}）` : '';
+  return `${cat.name}${cat.icon}${vehText}${presetTypeText[type] || '出勤'}`;
+}
 document.querySelectorAll('.dispatch-presets button[data-type]').forEach(btn=>{
   btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type, false); });
 });
@@ -1654,9 +1951,24 @@ function openDispatchPicker(type, useAll){
   document.querySelectorAll('#dispatchTypeSelect input[name=dispatchType]').forEach(r=>{
     r.checked = (r.value === type);
   });
+  // 車輛勾選：救護（ems）自動預選91車；若91車已經出動未返隊，改預選92車。
+  // 其他案件類型不自動預選，由人員自行勾選。
+  document.getElementById('dispatchVehicleSelect').innerHTML = vehicleCheckboxesHtml();
+  if(type === 'ems'){
+    setCheckedVehicles('dispatchVehicleSelect', [isVehicleOut('91') ? '92' : '91']);
+  }
   document.getElementById('dispatchPicker').style.display = 'block';
   document.getElementById('dispatchPicker').dataset.type = type;
 }
+// 案件類型單選鈕若在 picker 開著時被切換成「救護」，也同步更新車輛預選
+// （91車已出動時改92車），其他類型切換則不動車輛勾選（尊重使用者手動勾選）。
+document.querySelectorAll('#dispatchTypeSelect input[name=dispatchType]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    if(r.checked && r.value === 'ems' && !getCheckedVehicles('dispatchVehicleSelect').length){
+      setCheckedVehicles('dispatchVehicleSelect', [isVehicleOut('91') ? '92' : '91']);
+    }
+  });
+});
 function closeDispatchPicker(){
   document.getElementById('dispatchPicker').style.display = 'none';
 }
@@ -1666,16 +1978,17 @@ async function confirmDispatch(){
   const checks = document.querySelectorAll('#dispatchCheckboxes input[type=checkbox]:checked');
   if(!checks.length){ await showAlert('請至少勾選一位人員。'); return; }
   const batchId = ++dispatchBatchSeq; // everyone confirmed together shares one batch, so they can return together later
+  const vehicles = getCheckedVehicles('dispatchVehicleSelect');
   const confirmedNums = [];
   checks.forEach(cb=>{
     const n = Number(cb.value);
-    if(!dispatchOut.some(d=>d.num===n)) dispatchOut.push({num:n, type, batchId});
+    if(!dispatchOut.some(d=>d.num===n)) dispatchOut.push({num:n, type, batchId, vehicles:[...vehicles]});
     confirmedNums.push(n);
   });
   closeDispatchPicker();
   renderAll();
   syncToCloud();
-  notifyDispatch(confirmedNums, type, true);
+  notifyDispatch(confirmedNums, type, true, vehicles);
 }
 
 // ================= EXCEL IMPORT =================
