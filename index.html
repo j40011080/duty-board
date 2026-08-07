@@ -1266,7 +1266,7 @@ function renderTempOut(){
       tempOut = tempOut.filter(x=>x.num!==n);
       renderAll();
       syncToCloud();
-      notifyReturn([n], '', true);
+      notifyReturn([n], '🔄外出・返隊', true);
     });
   });
   wrap.querySelectorAll('button[data-edit-n]').forEach(btn=>{
@@ -1287,9 +1287,11 @@ function renderSubst(){
   wrap.querySelectorAll('button[data-i]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const i = Number(btn.dataset.i);
+      const s = substitutions[i];
       substitutions.splice(i,1);
       renderAll();
       syncToCloud();
+      notifySubstReturn(s);
     });
   });
   wrap.querySelectorAll('button[data-edit-i]').forEach(btn=>{
@@ -1563,9 +1565,10 @@ function notifyReturn(entries, label, fromLocalAction){
   if(fromLocalAction) queuePushNotify('return', entries, label);
 }
 function notifyTempOut(entries, fromLocalAction){
+  const label = '🚶外出・登記';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
-  showToast('🚶 已登記外出', names_, 'out');
-  if(fromLocalAction) queuePushNotify('tempOut', entries, '');
+  showToast(label, names_, 'out');
+  if(fromLocalAction) queuePushNotify('tempOut', entries, label);
 }
 
 // ================= 通知合併（防止短時間內連續觸發被拆成好幾則推播） =================
@@ -1603,8 +1606,9 @@ function flushPushNotify(kind){
     pushSystemNotification(title, names_);
     sendPushNotification(title, names_);
   } else if(kind === 'tempOut'){
-    pushSystemNotification('外出登記', names_);
-    sendPushNotification('🚶 外出登記', names_);
+    const title = label || '🚶外出・登記';
+    pushSystemNotification(title, names_);
+    sendPushNotification(title, names_);
   }
 }
 
@@ -1618,7 +1622,7 @@ function diffTempOut(prev, next){
   const added = next.filter(t=>!prevNums.includes(t.num)).map(t=>t.num);
   const removed = prev.filter(t=>!nextNums.includes(t.num)).map(t=>t.num);
   if(added.length) notifyTempOut(added);
-  if(removed.length) notifyReturn(removed);
+  if(removed.length) notifyReturn(removed, '🔄外出・返隊');
   // 同一個人還留在名單裡，但番號或車輛被其他裝置改過——補跳「已修改」通知。
   next.forEach(t=>{
     const p = prev.find(x=>x.num===t.num);
@@ -1726,6 +1730,15 @@ function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
   showToast('✏️ 代班登記已修改', body, 'out');
   pushSystemNotification('✏️ 代班登記已修改', body);
   sendPushNotification('✏️ 代班登記已修改', body);
+}
+// 取消代班＝代班人返回原崗位，通知格式跟外出／出勤的返隊一致，都用🔄開頭。
+function notifySubstReturn(s){
+  if(!s) return;
+  const title = '🔄代班・返隊';
+  const body = `${s.from} ${names[s.from]||'?'} 代 ${s.to} ${names[s.to]||'?'}`;
+  showToast(title, body, 'back');
+  pushSystemNotification(title, body);
+  sendPushNotification(title, body);
 }
 
 // 編輯「暫時外出登記」中的一筆：可改成別的人員、也可改勾選的車輛。
@@ -1955,14 +1968,16 @@ const presetVehicleCat = {
   other:{name:'',       icon:'🚨'}
 };
 const presetTypeText = { ems:'救護', fire:'火警', other:'其他' };
-// 通知標題統一格式：{案件類型圖示}{案件類型}・{出勤／返隊}{車輛圖示}{車號}
-// 例如救護出勤91車：🚑救護・出勤🚑91車；火警返隊11車：🔥火警・返隊🚒11車。
+// 通知標題統一格式：{圖示}{類型文字}・{動作}{...}
+// 出勤：{案件類型圖示}{案件類型}・出勤{車輛圖示}{車號}　例：🏥救護・出勤🚑91車
+// 返隊：一律用🔄開頭（不管救護／火警／其他），例：🔄救護・返隊🚑91車
 function dispatchNotifyLabel(type, vehicles, action){
-  const icon = presetIcons[type] || '';
+  const act = action || '出勤';
+  const icon = (act === '返隊') ? '🔄' : (presetIcons[type] || '');
   const typeText = presetTypeText[type] || '出勤';
-  const cat = presetVehicleCat[type] || {icon: icon};
+  const cat = presetVehicleCat[type] || {icon: presetIcons[type] || ''};
   const vehText = (vehicles && vehicles.length) ? vehicles.map(id => (VEHICLE_MAP[id] ? VEHICLE_MAP[id].label : id)).join('、') : '';
-  return `${icon}${typeText}・${action || '出勤'}${cat.icon}${vehText}`;
+  return `${icon}${typeText}・${act}${cat.icon}${vehText}`;
 }
 document.querySelectorAll('.dispatch-presets button[data-type]').forEach(btn=>{
   btn.addEventListener('click', ()=>{ if(unlocked) openDispatchPicker(btn.dataset.type, false); });
