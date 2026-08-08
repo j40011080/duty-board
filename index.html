@@ -481,6 +481,19 @@
     <button type="button" class="btn" id="notifyPermBtn" style="margin-bottom:8px;">🔔 開啟出勤／返隊 手機通知</button>
     <button type="button" class="btn" id="notifyDisableBtn" style="margin-bottom:18px;">🔕 關閉此裝置的手機通知</button>
     <div id="notifyPermStatus" style="font-size:.8rem; color:var(--dim2); margin:-12px 0 18px;"></div>
+    <div style="font-size:.85rem; font-weight:700; margin-bottom:6px;">這台裝置要接收哪些通知</div>
+    <div style="font-size:.78rem; color:var(--dim2); margin-bottom:10px;">
+      每台裝置（每個人）可以自己選擇要收到哪幾種通知——例如只想收外出通知、不想收代班通知都可以，跟其他人的裝置無關。
+    </div>
+    <label class="toggle-row">
+      <input type="checkbox" id="toggleNotifyDispatch"> 🚑🔥🚨 出勤（含出勤／返隊／修改）
+    </label>
+    <label class="toggle-row" style="margin-top:6px;">
+      <input type="checkbox" id="toggleNotifyTempOut"> 🚶 外出（含外出登記／返隊／修改）
+    </label>
+    <label class="toggle-row" style="margin-top:6px; margin-bottom:18px;">
+      <input type="checkbox" id="toggleNotifySubst"> 🔄 代班（含代班登記／返隊／修改）
+    </label>
     <div class="modal-actions">
       <button type="button" class="btn primary" id="funcModalClose">完成</button>
     </div>
@@ -742,6 +755,32 @@ let showFullSchedule = localStorage.getItem('showFullSchedule') !== '0';
 // 刻意不跟 Firebase 同步，因為每個裝置本來就要各自決定「我是不是那台
 // 負責發通知的值班電腦」，同步反而會讓所有裝置變成同一個開關。
 let isNotifyHub = localStorage.getItem('isNotifyHub') === '1';
+
+// ================= 通知種類偏好（每台裝置各自設定，不跟 Firebase 的
+// boardState 同步；只會夾帶在自己的 FCM 裝置紀錄裡，讓值班電腦發送推播
+// 時知道要不要發給這台裝置） =================
+// 例如：有人只想收「外出」通知、不想收「代班」通知，跟其他人的裝置無關，
+// 每支手機自己勾選自己想要的即可。三種都預設開啟（沒設定過＝全部照舊收到）。
+const NOTIFY_CATEGORIES = ['dispatch', 'tempOut', 'subst'];
+function loadNotifyCategoryPrefs(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('notifyCategoryPrefs') || '{}');
+    const prefs = {};
+    NOTIFY_CATEGORIES.forEach(c=> prefs[c] = saved[c] !== false);
+    return prefs;
+  }catch(e){
+    const prefs = {}; NOTIFY_CATEGORIES.forEach(c=> prefs[c] = true); return prefs;
+  }
+}
+let notifyCategoryPrefs = loadNotifyCategoryPrefs();
+function saveNotifyCategoryPrefs(){
+  localStorage.setItem('notifyCategoryPrefs', JSON.stringify(notifyCategoryPrefs));
+}
+// category 為 undefined／不在清單中時，預設仍然通知（避免舊呼叫沒帶 category 時被誤擋）。
+function shouldNotifyCategory(category){
+  if(!category) return true;
+  return notifyCategoryPrefs[category] !== false;
+}
 function applyFullScheduleVisibility(){
   const head = document.querySelector('.list-head');
   const wrap = document.getElementById('listWrap');
@@ -1266,7 +1305,7 @@ function renderTempOut(){
       tempOut = tempOut.filter(x=>x.num!==n);
       renderAll();
       syncToCloud();
-      notifyReturn([n], '🔄外出・返隊', true);
+      notifyReturn([n], '🔄外出・返隊', true, 'tempOut');
     });
   });
   wrap.querySelectorAll('button[data-edit-n]').forEach(btn=>{
@@ -1344,7 +1383,7 @@ function renderDispatchOut(){
       dispatchOut = dispatchOut.filter(d=>!(d.num===n && String(d.batchId)===bid));
       renderAll();
       syncToCloud();
-      notifyReturn([n], label, true);
+      notifyReturn([n], label, true, 'dispatch');
     });
   });
   wrap.querySelectorAll('button[data-edit-n]').forEach(btn=>{
@@ -1372,7 +1411,7 @@ function renderDispatchOut(){
         dispatchOut = dispatchOut.filter(d=>String(d.batchId)!==bid);
         renderAll();
         syncToCloud();
-        notifyReturn(entries.map(e=>e.num), label, true);
+        notifyReturn(entries.map(e=>e.num), label, true, 'dispatch');
       }
     });
   });
@@ -1486,7 +1525,9 @@ function registerFcmToken(){
           if(!token) return;
           // 用 token 本身當資料庫的 key：同一支手機重新取得同一個 token
           // 時只會覆蓋同一筆紀錄，不會越存越多筆重複的裝置。
-          db.ref('fcmTokens/' + token).set({ updatedAt: Date.now(), ua: navigator.userAgent });
+          // categories：這台裝置自己選擇要收哪幾種通知，讓值班電腦發送時可以
+          // 篩選收件裝置（見 sendPushNotification）。
+          db.ref('fcmTokens/' + token).set({ updatedAt: Date.now(), ua: navigator.userAgent, categories: notifyCategoryPrefs });
         })
         .catch(err=> console.warn('取得推播 token 失敗', err));
     }catch(e){ console.warn('FCM 初始化例外', e); }
@@ -1502,8 +1543,9 @@ function notifyPermStatusText(){
 
 // 系統通知：優先透過已註冊的 Service Worker 發送（手機鎖屏、切到背景時也叫得出來），
 // 沒有 Service Worker 時退回用一般 Notification()。沒有開啟權限時就只顯示頁面橫幅。
-function pushSystemNotification(title, body){
+function pushSystemNotification(title, body, category){
   if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  if(!shouldNotifyCategory(category)) return; // 這台裝置自己關掉了這種通知
   const opts = { body, icon: './icon.svg', badge: './icon.svg' };
   if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistration().then(reg=>{
@@ -1526,7 +1568,7 @@ function pushSystemNotification(title, body){
 // 讓它去呼叫 FCM，而不是 LINE。部署步驟見「背景推播設定步驟.md」。
 const NOTIFY_WORKER_URL = 'https://beigang-line-notify.j40011080.workers.dev';
 
-function sendPushNotification(title, body){
+function sendPushNotification(title, body, category){
   if(!isNotifyHub) return;          // 不是通知主機的裝置，什麼都不做
   if(!cloudEnabled || !db) return;
   if(!NOTIFY_WORKER_URL || NOTIFY_WORKER_URL.indexOf('PASTE_YOUR') === 0) return;
@@ -1535,7 +1577,13 @@ function sendPushNotification(title, body){
   //  Worker 那邊完全不用碰你的 Firebase 專案權限。）
   db.ref('fcmTokens').once('value').then(snap=>{
     const obj = snap.val() || {};
-    const tokens = Object.keys(obj);
+    // 依每台裝置自己選的通知種類（categories）篩選收件人：沒存過偏好設定
+    // 的舊裝置（categories 欄位不存在）視為「全部都要收」，維持原本行為。
+    const tokens = Object.keys(obj).filter(t=>{
+      const cats = obj[t] && obj[t].categories;
+      if(!cats || !category) return true;
+      return cats[category] !== false;
+    });
     if(!tokens.length) return;
     fetch(NOTIFY_WORKER_URL, {
       method: 'POST',
@@ -1557,18 +1605,21 @@ function notifyDispatch(entries, type, fromLocalAction, vehicles){
   const label = dispatchNotifyLabel(type, vehicles, '出勤'); // 例：🚑救護・出勤🚑91車
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(label, names_, 'out'); // 本機畫面即時提示，不受下面的限制影響
-  if(fromLocalAction) queuePushNotify('dispatch', entries, label);
+  if(fromLocalAction) queuePushNotify('dispatch', entries, label, 'dispatch');
 }
-function notifyReturn(entries, label, fromLocalAction){
+// category 參數：出勤返隊傳 'dispatch'、外出返隊傳 'tempOut'、代班返隊另外走
+// notifySubstReturn。不指定時預設當作出勤返隊（沿用舊呼叫端的行為）。
+function notifyReturn(entries, label, fromLocalAction, category){
+  const cat = category || 'dispatch';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(label || '🔄 返隊', names_, 'back');
-  if(fromLocalAction) queuePushNotify('return', entries, label);
+  if(fromLocalAction) queuePushNotify('return-' + cat, entries, label, cat);
 }
 function notifyTempOut(entries, fromLocalAction){
   const label = '🚶外出・登記';
   const names_ = entries.map(n=>`${n} ${names[n]||'?'}`).join('、');
   showToast(label, names_, 'out');
-  if(fromLocalAction) queuePushNotify('tempOut', entries, label);
+  if(fromLocalAction) queuePushNotify('tempOut', entries, label, 'tempOut');
 }
 
 // ================= 通知合併（防止短時間內連續觸發被拆成好幾則推播） =================
@@ -1577,10 +1628,13 @@ function notifyTempOut(entries, fromLocalAction){
 // 這段時間內被觸發多次，就先暫存起來、合併成一則之後再真正送出手機推播。
 // 本機畫面的 showToast 完全不受影響，維持即時顯示。
 const NOTIFY_MERGE_WINDOW_MS = 2000;
-const pendingPush = {}; // kind -> { nums:Set, label, timer }
+const pendingPush = {}; // kind -> { nums:Set, label, category, timer }
 
-function queuePushNotify(kind, entries, label){
-  if(!pendingPush[kind]) pendingPush[kind] = { nums: new Set(), label: label || '', timer: null };
+// kind 是合併用的 key（同一種事件短時間內連續觸發才合併成一則）；category
+// 則是拿來對照使用者在「通知種類偏好」裡勾選了什麼，兩者分開存，避免「出勤
+// 登記」跟「出勤返隊」被錯誤合併成同一則卻各自的分類判斷又混在一起。
+function queuePushNotify(kind, entries, label, category){
+  if(!pendingPush[kind]) pendingPush[kind] = { nums: new Set(), label: label || '', category, timer: null };
   const bucket = pendingPush[kind];
   entries.forEach(n=>bucket.nums.add(n));
   if(label && !bucket.label) bucket.label = label;
@@ -1596,19 +1650,20 @@ function flushPushNotify(kind){
   if(!nums.length) return;
   const names_ = nums.map(n=>`${n} ${names[n]||'?'}`).join('、');
   const label = bucket.label;
+  const category = bucket.category;
 
   if(kind === 'dispatch'){
     const title = label || '出勤登記';
-    pushSystemNotification(title, names_);
-    sendPushNotification(title, names_);
-  } else if(kind === 'return'){
+    pushSystemNotification(title, names_, category);
+    sendPushNotification(title, names_, category);
+  } else if(kind.indexOf('return-') === 0){
     const title = label || '🔄 返隊';
-    pushSystemNotification(title, names_);
-    sendPushNotification(title, names_);
+    pushSystemNotification(title, names_, category);
+    sendPushNotification(title, names_, category);
   } else if(kind === 'tempOut'){
     const title = label || '🚶外出・登記';
-    pushSystemNotification(title, names_);
-    sendPushNotification(title, names_);
+    pushSystemNotification(title, names_, category);
+    sendPushNotification(title, names_, category);
   }
 }
 
@@ -1622,7 +1677,7 @@ function diffTempOut(prev, next){
   const added = next.filter(t=>!prevNums.includes(t.num)).map(t=>t.num);
   const removed = prev.filter(t=>!nextNums.includes(t.num)).map(t=>t.num);
   if(added.length) notifyTempOut(added);
-  if(removed.length) notifyReturn(removed, '🔄外出・返隊');
+  if(removed.length) notifyReturn(removed, '🔄外出・返隊', false, 'tempOut');
   // 同一個人還留在名單裡，但番號或車輛被其他裝置改過——補跳「已修改」通知。
   next.forEach(t=>{
     const p = prev.find(x=>x.num===t.num);
@@ -1648,7 +1703,7 @@ function diffDispatchOut(prev, next){
   removed.forEach(d=>{ (removedByBatch[d.batchId] = removedByBatch[d.batchId] || []).push(d); });
   Object.values(removedByBatch).forEach(entries=>{
     const label = dispatchNotifyLabel(entries[0].type, entries[0].vehicles, '返隊');
-    notifyReturn(entries.map(e=>e.num), label);
+    notifyReturn(entries.map(e=>e.num), label, false, 'dispatch');
   });
 
   // 同一個人、同一批次仍在名單裡，但其他裝置改了車輛或案件類型——補跳「已修改」通知。
@@ -1718,9 +1773,10 @@ function notifyEditToast(kind, oldNum, newNum, oldVehicles, newVehicles, typeCha
   if(typeChange && typeChange.from !== typeChange.to) parts.push(`類型：${typeChange.from} → ${typeChange.to}`);
   if(!parts.length) return;
   const body = parts.join('　｜　');
+  const category = kind === '外出登記' ? 'tempOut' : 'dispatch';
   showToast(`✏️ ${kind}已修改`, body, 'out');
-  pushSystemNotification(`✏️ ${kind}已修改`, body);
-  sendPushNotification(`✏️ ${kind}已修改`, body);
+  pushSystemNotification(`✏️ ${kind}已修改`, body, category);
+  sendPushNotification(`✏️ ${kind}已修改`, body, category);
 }
 function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
   const oldStr = `${oldFrom} ${names[oldFrom]||'?'} 代 ${oldTo} ${names[oldTo]||'?'}`;
@@ -1728,8 +1784,8 @@ function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
   if(oldStr === newStr) return;
   const body = `${oldStr} → ${newStr}`;
   showToast('✏️ 代班登記已修改', body, 'out');
-  pushSystemNotification('✏️ 代班登記已修改', body);
-  sendPushNotification('✏️ 代班登記已修改', body);
+  pushSystemNotification('✏️ 代班登記已修改', body, 'subst');
+  sendPushNotification('✏️ 代班登記已修改', body, 'subst');
 }
 // 取消代班＝代班人返回原崗位，通知格式跟外出／出勤的返隊一致，都用🔄開頭。
 function notifySubstReturn(s){
@@ -1737,8 +1793,8 @@ function notifySubstReturn(s){
   const title = '🔄代班・返隊';
   const body = `${s.from} ${names[s.from]||'?'} 代 ${s.to} ${names[s.to]||'?'}`;
   showToast(title, body, 'back');
-  pushSystemNotification(title, body);
-  sendPushNotification(title, body);
+  pushSystemNotification(title, body, 'subst');
+  sendPushNotification(title, body, 'subst');
 }
 
 // 編輯「暫時外出登記」中的一筆：可改成別的人員、也可改勾選的車輛。
@@ -1855,8 +1911,8 @@ function notifyBatchEditToast(entries, oldType, newType, oldVehicles, newVehicle
   const body = parts.join('　｜　');
   const title = `✏️ 出勤登記已整批修改（${entries.length}人）`;
   showToast(title, body, 'out');
-  pushSystemNotification(title, body);
-  sendPushNotification(title, body);
+  pushSystemNotification(title, body, 'dispatch');
+  sendPushNotification(title, body, 'dispatch');
 }
 
 // 編輯「代班登記」中的一筆：可改代班人／被代班人番號。
@@ -2031,21 +2087,29 @@ function openDispatchPicker(type, useAll){
   document.querySelectorAll('#dispatchTypeSelect input[name=dispatchType]').forEach(r=>{
     r.checked = (r.value === type);
   });
-  // 車輛勾選：救護（ems）自動預選91車；若91車已經出動未返隊，改預選92車。
-  // 其他案件類型不自動預選，由人員自行勾選。
+  // 車輛勾選：救護（ems）自動預選91車；若91車已經出動未返隊，改預選92車；
+  // 若91、92車都已出動未返隊，兩台都不預選，交給人員自行勾選（例如其他消防車）。
   document.getElementById('dispatchVehicleSelect').innerHTML = vehicleCheckboxesHtml();
   if(type === 'ems'){
-    setCheckedVehicles('dispatchVehicleSelect', [isVehicleOut('91') ? '92' : '91']);
+    setCheckedVehicles('dispatchVehicleSelect', defaultEmsVehicles());
   }
   document.getElementById('dispatchPicker').style.display = 'block';
   document.getElementById('dispatchPicker').dataset.type = type;
 }
+// 救護車預選邏輯（共用）：91車沒出動就選91；91車出動了但92車沒出動就改選92；
+// 兩台都已出動未返隊，就不預選任何一台，避免使用者沒注意到又送出「92車」的錯誤登記。
+function defaultEmsVehicles(){
+  if(!isVehicleOut('91')) return ['91'];
+  if(!isVehicleOut('92')) return ['92'];
+  return [];
+}
 // 案件類型單選鈕若在 picker 開著時被切換成「救護」，也同步更新車輛預選
-// （91車已出動時改92車），其他類型切換則不動車輛勾選（尊重使用者手動勾選）。
+// （91車已出動時改92車；兩台都出動則不預選），其他類型切換則不動車輛勾選
+// （尊重使用者手動勾選）。
 document.querySelectorAll('#dispatchTypeSelect input[name=dispatchType]').forEach(r=>{
   r.addEventListener('change', ()=>{
     if(r.checked && r.value === 'ems' && !getCheckedVehicles('dispatchVehicleSelect').length){
-      setCheckedVehicles('dispatchVehicleSelect', [isVehicleOut('91') ? '92' : '91']);
+      setCheckedVehicles('dispatchVehicleSelect', defaultEmsVehicles());
     }
   });
 });
@@ -2389,6 +2453,9 @@ document.getElementById('funcSettingsBtn').addEventListener('click', ()=>{
   document.getElementById('toggleFullSchedule').checked = showFullSchedule;
   document.getElementById('toggleNotifyHub').checked = isNotifyHub;
   document.getElementById('notifyPermStatus').textContent = notifyPermStatusText();
+  document.getElementById('toggleNotifyDispatch').checked = notifyCategoryPrefs.dispatch;
+  document.getElementById('toggleNotifyTempOut').checked = notifyCategoryPrefs.tempOut;
+  document.getElementById('toggleNotifySubst').checked = notifyCategoryPrefs.subst;
   document.getElementById('funcModalOverlay').style.display = 'flex';
 });
 document.getElementById('funcModalClose').addEventListener('click', ()=>{
@@ -2397,6 +2464,20 @@ document.getElementById('funcModalClose').addEventListener('click', ()=>{
   applyFullScheduleVisibility();
   isNotifyHub = document.getElementById('toggleNotifyHub').checked;
   localStorage.setItem('isNotifyHub', isNotifyHub ? '1' : '0');
+  const prevPrefs = JSON.stringify(notifyCategoryPrefs);
+  notifyCategoryPrefs = {
+    dispatch: document.getElementById('toggleNotifyDispatch').checked,
+    tempOut: document.getElementById('toggleNotifyTempOut').checked,
+    subst: document.getElementById('toggleNotifySubst').checked
+  };
+  saveNotifyCategoryPrefs();
+  // 通知種類偏好有變動時，重新註冊一次 FCM token，把新的 categories 寫回
+  // Firebase，這樣值班電腦下次發送背景推播時才會用到最新的篩選條件。
+  // （只有已經開過手機通知權限、且沒有手動關閉過的裝置才需要這麼做。）
+  if(JSON.stringify(notifyCategoryPrefs) !== prevPrefs && !notifyManuallyDisabled
+     && ('Notification' in window) && Notification.permission === 'granted'){
+    registerFcmToken();
+  }
   document.getElementById('funcModalOverlay').style.display = 'none';
 });
 document.getElementById('notifyPermBtn').addEventListener('click', requestNotifyPermission);
