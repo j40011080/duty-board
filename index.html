@@ -492,7 +492,7 @@
       <input type="checkbox" id="toggleNotifyTempOut"> 🚶 外出（含外出登記／返隊／修改）
     </label>
     <label class="toggle-row" style="margin-top:6px; margin-bottom:18px;">
-      <input type="checkbox" id="toggleNotifySubst"> 🔄 代班（含代班登記／返隊／修改）
+      <input type="checkbox" id="toggleNotifySubst"> 🔁 代班（含代班登記／取消／修改）
     </label>
     <div class="modal-actions">
       <button type="button" class="btn primary" id="funcModalClose">完成</button>
@@ -1807,6 +1807,16 @@ function notifyEditToast(kind, oldNum, newNum, oldVehicles, newVehicles, typeCha
   pushSystemNotification(`✏️ ${kind}已修改`, body, category);
   sendPushNotification(`✏️ ${kind}已修改`, body, category);
 }
+// 新增一筆代班登記：跟出勤／外出登記的通知邏輯一致，用🔁（跟「返隊/取消」的
+// ❌ 圖案區分開來，一眼就能分辨是新登記還是取消）。
+function notifySubstAdd(s){
+  if(!s) return;
+  const title = '🔁代班・登記';
+  const body = `${s.from} ${names[s.from]||'?'} 代 ${s.to} ${names[s.to]||'?'}`;
+  showToast(title, body, 'out');
+  pushSystemNotification(title, body, 'subst');
+  sendPushNotification(title, body, 'subst');
+}
 function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
   const oldStr = `${oldFrom} ${names[oldFrom]||'?'} 代 ${oldTo} ${names[oldTo]||'?'}`;
   const newStr = `${newFrom} ${names[newFrom]||'?'} 代 ${newTo} ${names[newTo]||'?'}`;
@@ -1816,10 +1826,11 @@ function notifySubstEditToast(oldFrom, oldTo, newFrom, newTo){
   pushSystemNotification('✏️ 代班登記已修改', body, 'subst');
   sendPushNotification('✏️ 代班登記已修改', body, 'subst');
 }
-// 取消代班＝代班人返回原崗位，通知格式跟外出／出勤的返隊一致，都用🔄開頭。
+// 取消代班＝代班人返回原崗位。文字用「取消」而不是「返隊」，跟登記／取消
+// 兩種通知的圖案（🔁／❌）都不一樣，比較不會搞混。
 function notifySubstReturn(s){
   if(!s) return;
-  const title = '🔄代班・返隊';
+  const title = '❌代班・取消';
   const body = `${s.from} ${names[s.from]||'?'} 代 ${s.to} ${names[s.to]||'?'}`;
   showToast(title, body, 'back');
   pushSystemNotification(title, body, 'subst');
@@ -2026,10 +2037,12 @@ async function addSubst(){
     return;
   }
   if(from === to){ await showAlert('代班人與被代班人不能相同。'); return; }
-  substitutions.push({from, to});
+  const s = {from, to};
+  substitutions.push(s);
   fromInput.value = ''; toInput.value = '';
   renderAll();
   syncToCloud();
+  notifySubstAdd(s);
 }
 
 // ================= QUICK DISPATCH (快速出勤登記) =================
