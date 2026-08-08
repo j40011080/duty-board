@@ -1510,27 +1510,56 @@ function disableNotify(){
 const FCM_VAPID_KEY = 'PASTE_YOUR_VAPID_KEY_HERE';
 
 let messaging = null;
+// 除錯用：把每一次註冊過程的關鍵步驟（成功或失敗）都記一筆到 Firebase 的
+// fcmDebugLog，這樣不用接電腦用 Safari 網頁檢閱器，也能回頭看某台裝置
+// 當時到底卡在哪一步、錯誤訊息是什麼。
+function logFcmDebug(stage, extra){
+  if(!cloudEnabled || !db) return;
+  try{
+    db.ref('fcmDebugLog').push({
+      ts: Date.now(),
+      stage,
+      ua: navigator.userAgent,
+      notifPermission: ('Notification' in window) ? Notification.permission : '(不支援)',
+      ...extra
+    }).catch(()=>{});
+  }catch(e){}
+}
 function registerFcmToken(){
-  if(!cloudEnabled || !db) return;                       // 沒接雲端同步就不用做
-  if(!('serviceWorker' in navigator)) return;
+  logFcmDebug('start');
+  if(!cloudEnabled || !db){ logFcmDebug('abort:no-cloud'); return; }                       // 沒接雲端同步就不用做
+  if(!('serviceWorker' in navigator)){ logFcmDebug('abort:no-serviceworker'); return; }
   if(!FCM_VAPID_KEY || FCM_VAPID_KEY.indexOf('PASTE_YOUR') === 0){
     console.warn('尚未設定 FCM_VAPID_KEY，背景推播功能暫未啟用');
+    logFcmDebug('abort:no-vapid-key');
     return;
   }
   navigator.serviceWorker.ready.then(reg=>{
+    logFcmDebug('sw-ready', { swScope: reg.scope });
     try{
       if(!messaging) messaging = firebase.messaging();
       messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg })
         .then(token=>{
-          if(!token) return;
+          if(!token){ logFcmDebug('getToken-empty'); return; }
+          logFcmDebug('getToken-success', { tokenPreview: token.slice(0,12) + '…' });
           // 用 token 本身當資料庫的 key：同一支手機重新取得同一個 token
           // 時只會覆蓋同一筆紀錄，不會越存越多筆重複的裝置。
           // categories：這台裝置自己選擇要收哪幾種通知，讓值班電腦發送時可以
           // 篩選收件裝置（見 sendPushNotification）。
-          db.ref('fcmTokens/' + token).set({ updatedAt: Date.now(), ua: navigator.userAgent, categories: notifyCategoryPrefs });
+          db.ref('fcmTokens/' + token).set({ updatedAt: Date.now(), ua: navigator.userAgent, categories: notifyCategoryPrefs })
+            .then(()=> logFcmDebug('db-write-success'))
+            .catch(err=> logFcmDebug('db-write-fail', { errMsg: String(err && err.message || err) }));
         })
-        .catch(err=> console.warn('取得推播 token 失敗', err));
-    }catch(e){ console.warn('FCM 初始化例外', e); }
+        .catch(err=>{
+          console.warn('取得推播 token 失敗', err);
+          logFcmDebug('getToken-fail', { errMsg: String(err && err.message || err), errCode: err && err.code, errName: err && err.name });
+        });
+    }catch(e){
+      console.warn('FCM 初始化例外', e);
+      logFcmDebug('init-exception', { errMsg: String(e && e.message || e), errName: e && e.name });
+    }
+  }).catch(err=>{
+    logFcmDebug('sw-ready-fail', { errMsg: String(err && err.message || err) });
   });
 }
 function notifyPermStatusText(){
