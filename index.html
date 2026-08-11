@@ -723,6 +723,9 @@ function initFirebase(){
 }
 
 // ================= 解鎖編輯（左上角🔒） =================
+// pinPurpose 記錄「這次跳出密碼視窗，是為了解鎖編輯、還是為了勾選通知
+// 主機」，同一個密碼視窗兩邊共用，靠這個變數分辨密碼答對之後要做什麼。
+let pinPurpose = 'unlock';
 function setUnlocked(val){
   unlocked = val;
   document.body.classList.toggle('locked', !unlocked);
@@ -730,22 +733,37 @@ function setUnlocked(val){
   btn.textContent = unlocked ? '🔓 鎖定（改回唯讀）' : '🔒 解鎖編輯';
   btn.classList.toggle('unlocked', unlocked);
 }
-document.getElementById('lockToggleBtn').addEventListener('click', ()=>{
-  if(unlocked){ setUnlocked(false); return; }
+function openPinModal(purpose){
+  pinPurpose = purpose;
   document.getElementById('pinInput').value = '';
   document.getElementById('pinModalOverlay').style.display = 'flex';
   setTimeout(()=>document.getElementById('pinInput').focus(), 50);
+}
+document.getElementById('lockToggleBtn').addEventListener('click', ()=>{
+  if(unlocked){ setUnlocked(false); return; }
+  openPinModal('unlock');
 });
 document.getElementById('pinModalCancel').addEventListener('click', ()=>{
   document.getElementById('pinModalOverlay').style.display = 'none';
+  // 如果是為了勾選「通知主機」跳出密碼視窗，取消的話要把勾勾還原成未勾選。
+  if(pinPurpose === 'notifyHub') document.getElementById('toggleNotifyHub').checked = false;
 });
 document.getElementById('pinModalOk').addEventListener('click', tryUnlock);
 document.getElementById('pinInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') tryUnlock(); });
 async function tryUnlock(){
   const val = document.getElementById('pinInput').value;
   document.getElementById('pinModalOverlay').style.display = 'none';
-  if(val === EDIT_PIN){ setUnlocked(true); }
-  else{ await showAlert('密碼錯誤，請再試一次。'); }
+  if(val !== EDIT_PIN){
+    if(pinPurpose === 'notifyHub') document.getElementById('toggleNotifyHub').checked = false;
+    await showAlert('密碼錯誤，請再試一次。');
+    return;
+  }
+  if(pinPurpose === 'notifyHub'){
+    notifyHubVerified = true; // 這次頁面開啟期間，密碼已經驗證過，不用每次重問
+    document.getElementById('toggleNotifyHub').checked = true;
+  } else {
+    setUnlocked(true);
+  }
 }
 
 // 是否顯示「全日班表」區塊（功能設定）
@@ -755,6 +773,9 @@ let showFullSchedule = localStorage.getItem('showFullSchedule') !== '0';
 // 刻意不跟 Firebase 同步，因為每個裝置本來就要各自決定「我是不是那台
 // 負責發通知的值班電腦」，同步反而會讓所有裝置變成同一個開關。
 let isNotifyHub = localStorage.getItem('isNotifyHub') === '1';
+// 這次頁面開啟期間，「通知主機」密碼是否已經驗證過——驗證過一次之後，同一次
+// 開啟頁面內不用每次勾選都重問，但重新整理／重開頁面後就要再輸入一次。
+let notifyHubVerified = false;
 
 // ================= 通知種類偏好（每台裝置各自設定，不跟 Firebase 的
 // boardState 同步；只會夾帶在自己的 FCM 裝置紀錄裡，讓值班電腦發送推播
@@ -1542,6 +1563,11 @@ function registerFcmToken(){
         .then(token=>{
           if(!token){ logFcmDebug('getToken-empty'); return; }
           logFcmDebug('getToken-success', { tokenPreview: token.slice(0,12) + '…' });
+          // 記住「這台裝置自己的 token」：等一下值班電腦發送推播時，會把
+          // 「自己的 token」從收件名單裡排除掉——因為操作的當下已經用
+          // pushSystemNotification 馬上跳過一次通知了，不需要再讓 FCM 繞
+          // 一圈把同一則推播送回自己，不然自己操作時會看到跳兩次通知。
+          localStorage.setItem('myFcmToken', token);
           // 用 token 本身當資料庫的 key：同一支手機重新取得同一個 token
           // 時只會覆蓋同一筆紀錄，不會越存越多筆重複的裝置。
           // categories：這台裝置自己選擇要收哪幾種通知，讓值班電腦發送時可以
@@ -1606,9 +1632,14 @@ function sendPushNotification(title, body, category){
   //  Worker 那邊完全不用碰你的 Firebase 專案權限。）
   db.ref('fcmTokens').once('value').then(snap=>{
     const obj = snap.val() || {};
+    const myToken = localStorage.getItem('myFcmToken');
     // 依每台裝置自己選的通知種類（categories）篩選收件人：沒存過偏好設定
     // 的舊裝置（categories 欄位不存在）視為「全部都要收」，維持原本行為。
+    // 同時排除「發送這則通知的裝置自己」——操作的當下已經用
+    // pushSystemNotification 馬上跳過一次通知了，不用再讓 FCM 送回自己一次，
+    // 不然操作的人（尤其兩台裝置都設成通知主機時）會看到同一則跳兩次。
     const tokens = Object.keys(obj).filter(t=>{
+      if(myToken && t === myToken) return false;
       const cats = obj[t] && obj[t].categories;
       if(!cats || !category) return true;
       return cats[category] !== false;
@@ -2499,6 +2530,16 @@ document.getElementById('funcSettingsBtn').addEventListener('click', ()=>{
   document.getElementById('toggleNotifyTempOut').checked = notifyCategoryPrefs.tempOut;
   document.getElementById('toggleNotifySubst').checked = notifyCategoryPrefs.subst;
   document.getElementById('funcModalOverlay').style.display = 'flex';
+});
+// 勾選「此裝置為通知主機」要輸入密碼（跟解鎖編輯同一組），避免有人誤觸
+// 或不知情的情況下把自己的裝置設成通知主機，導致大家收到重複的推播。
+// 如果這台裝置當下已經是「解鎖編輯」狀態（代表密碼剛剛才驗證過），就不用
+// 再問一次；取消勾選則不需要密碼，隨時都可以關掉。
+document.getElementById('toggleNotifyHub').addEventListener('change', (e)=>{
+  if(!e.target.checked) return; // 取消勾選不用密碼
+  if(unlocked || notifyHubVerified) return; // 這次頁面開啟期間密碼已經驗證過
+  e.target.checked = false; // 先還原成未勾選，等密碼答對了再由 tryUnlock 打勾
+  openPinModal('notifyHub');
 });
 document.getElementById('funcModalClose').addEventListener('click', ()=>{
   showFullSchedule = document.getElementById('toggleFullSchedule').checked;
