@@ -1086,9 +1086,9 @@ function buildFlatForBlock(blocks, idx, carsCache){
       }
     }
     // Final check: this hour's own row, from 備勤(5) all the way through the
-    // 休息時間 column (that column is folded into cur.pos under the REST_KEY
-    // slot during parsing, so it's included automatically here since it sorts
-    // after position 14). Anyone listed anywhere in that range who hasn't
+    // 休息時間 欄位（休息時間可能同時有 2 個人，解析時已經各自展開成
+    // REST_KEY、REST_KEY+1...存進 cur.pos，所以這裡不用特別處理，一樣是
+    // key>=5 就會被涵蓋到）。Anyone listed anywhere in that range who hasn't
     // already been placed gets pulled in — this replaces the old "compare
     // against the whole day's 今日上班番號 roster" safety net, since someone
     // can be on today's roster line but actually supporting another unit (not
@@ -2469,8 +2469,14 @@ function parseScheduleAOA(aoa){
       const v = readNum(col);
       if(v!==undefined) pos[Number(posNum)] = v;
     }
-    const restNum = readNum(restCol);
-    if(restNum !== undefined) pos[REST_KEY] = restNum;
+    const restNums = readNumsInRange(row, restCol>=0 ? [restCol, restCol+2] : null);
+    // 「休息時間」欄位有時要同時容納 2 個人（例如換班交接那一小時剛好兩人都在
+    // 休息），原本只讀一格會漏掉第二個人，導致那個人整小時直接從畫面上消失、
+    // 連❌標記都不會有。這裡改成跟消防查察/水源查察一樣，讀一小段範圍、把
+    // 讀到的每個番號都各自存一個 REST_KEY 起算的位置，讓後面「這小時範圍內
+    // 有沒有出現這個番號」的最終檢查（見 buildFlatForBlock 裡的說明）能抓到
+    // 全部休息的人，不會漏掉。
+    restNums.forEach((restNum, i) => { pos[REST_KEY + i] = restNum; });
     if(Object.keys(pos).length===0) continue;
 
     const entry = { s, e, pos };
