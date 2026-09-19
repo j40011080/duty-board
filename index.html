@@ -997,7 +997,9 @@ function mergeRowPositions(rows){
 // (81/82/83 only drive — the source sheet never assigns them into the (1)-(4)
 // car-crew columns, so they're excluded here specifically).
 function isEligibleCar(v, used){
-  return v!==undefined && v!==null && !DRIVER_NUMS.has(v) && v!==supervisorNum && !used.has(v);
+  // 當日主管可以編進車組（例如表上 (3)(4) 有寫主管番號就照表上排），
+  // 所以這裡不再排除 supervisorNum。（備勤名單仍不列主管，他在「當日主管」那一行。）
+  return v!==undefined && v!==null && !DRIVER_NUMS.has(v) && !used.has(v);
 }
 
 // "Can this person be slotted into standby (備勤) right now": not already
