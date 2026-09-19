@@ -291,6 +291,7 @@
     border-radius:6px; font-size:.95em; letter-spacing:1px;
   }
   .car-tag.out-vehicle-tag{ background: var(--away); color:#2a0d0d; }
+  .duty-person .car-tag{ padding:2px 10px; font-size:.8em; }
   .room-tag{
     background:#20304a; border:1px solid #3a527a; color:#8fa8cc;
     padding:2px 9px; border-radius:6px; font-size:.8em; font-weight:500;
@@ -649,7 +650,12 @@ function syncToCloud(){
   if(!cloudEnabled || !db || !unlocked) return;
   try{
     const state = JSON.parse(JSON.stringify(collectState()));
-    db.ref('boardState').set(state);
+    db.ref('boardState').set(state).catch(err=>{
+      // 寫入被雲端拒絕時，Firebase 會把畫面退回雲端上的舊資料，看起來就像
+      // 「匯入後沒有更新／又跳回舊的」，所以一定要明確提醒。
+      console.error('雲端寫入失敗', err);
+      showAlert('⚠️ 這次修改沒有存到雲端（其他裝置看不到，畫面也可能跳回舊資料）。\n原因：' + ((err && err.message) ? err.message : err));
+    });
   }catch(e){ console.error('雲端同步失敗', e); }
 }
 
@@ -686,7 +692,10 @@ function applyRemoteState(state){
   dispatchBatchSeq = state.dispatchBatchSeq || 0;
   substitutions = state.substitutions || [];
   if(state.supervisorNum !== undefined) supervisorNum = state.supervisorNum;
-  if(state.rosterNums !== undefined) rosterNums = state.rosterNums;
+  // 新匯入的表如果沒有「今日上班番號」那一行，rosterNums 會是 null，Firebase
+  // 會把 null 欄位直接刪掉；這裡不能用「有值才套用」，否則其他裝置會一直
+  // 留著上一份表的名單。
+  rosterNums = state.rosterNums || null;
   if(state.importedDateStr) importedDateStr = state.importedDateStr;
   // 跟 otherDuty 同樣的道理，不用 if 判斷是否有值，永遠直接套用。
   roomNumbers = state.roomNumbers || {};
@@ -818,7 +827,15 @@ const CAR_LABELS = ['11車','62車','瞄子手','瞄子手','91車','71車','31�
 function buildCarMap(list){
   const eligible = list.filter(n => n!==undefined && n!==null && !isConscript(n) && !isMarkedOut(n));
   const map = {};
-  CAR_LABELS.forEach((label,i)=>{ if(eligible[i]!==undefined) map[eligible[i]] = label; });
+  CAR_LABELS.forEach((label,i)=>{
+    if(eligible[i]===undefined) return;
+    // 「71車」「91車」這類標籤，如果那台車目前已經出勤／外出（還沒返隊），
+    // 就不再標給任何人，避免出現「71車已經出去了，卻又有人被標成71車」。
+    // 順位仍照原本算，只是這個標籤這段時間不顯示（返隊後自動恢復）。
+    const m = label.match(/^(\d+)車$/);
+    if(m && isVehicleOut(m[1])) return;
+    map[eligible[i]] = label;
+  });
   return map;
 }
 
@@ -1170,7 +1187,12 @@ function dutyPersonHtml(n, opts){
   const roomHtml = room ? `<span class="room-tag">${esc(room)}房</span>` : '';
   const titleHtml = (opts.showTitle && titles[n]) ? `${esc(titles[n])} ` : '';
   const cls = ['duty-person']; if(opts.cls) cls.push(opts.cls);
-  return `<span class="${cls.join(' ')}"><span class="duty-label">${esc(opts.label)}</span>：<b>${p.num}</b> ${titleHtml}<span class="${nameCls.join(' ')}">${p.name}</span>${roomHtml}${outMarkHtml(n)}</span>`;
+  // 跟 chip() 一樣：有帶車出去就顯示「🧰71車 出」標籤（並省略案件圖示），
+  // 沒帶車才顯示案件圖示／❌。
+  const outVehicle = assignedVehicleLabel(n);
+  const outVehicleHtml = outVehicle ? `<span class="car-tag out-vehicle-tag">${esc(outVehicle)} 出</span>` : '';
+  const outMark = outVehicle ? '' : outMarkHtml(n);
+  return `<span class="${cls.join(' ')}"><span class="duty-label">${esc(opts.label)}</span>：<b>${p.num}</b> ${titleHtml}<span class="${nameCls.join(' ')}">${p.name}</span>${roomHtml}${outMark}${outVehicleHtml}</span>`;
 }
 function chip(n, ord, opts){
   if(n===undefined || n===null) return '<span class="chip empty">—</span>';
