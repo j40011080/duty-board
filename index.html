@@ -307,6 +307,18 @@
     .chip .num{ font-size:1.35rem; }
   }
 
+  /* 手機（<700px）專用：第一台車／第二台車的兩位人員固定左右並排，
+     不管有沒有「出車」標籤都不會被撐成上下兩排。做法：兩人各佔一半寬度，
+     並把「🚑91車 出」、房號標籤縮小一點（內距、字級、字距），才塞得進半格。
+     平板／電腦（>=700px）完全不受影響。 */
+  @media (max-width:699px){
+    .col.car1 .people, .col.car2 .people{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+    .col.car1 .chip.big, .col.car2 .chip.big{ padding:6px 8px; min-width:0; }
+    .chip.big .chip-meta{ gap:4px; }
+    .chip.big .car-tag{ padding:2px 7px; font-size:.78em; letter-spacing:0; }
+    .chip.big .room-tag{ padding:1px 7px; font-size:.75em; }
+  }
+
   /* 雲端同步／解鎖編輯 */
   .lock-fab{ position:fixed; top:12px; left:12px; z-index:80; display:flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:70vw; }
   .lock-fab .btn{ font-size:.8rem; padding:8px 12px; box-shadow:0 4px 14px #00000066; }
