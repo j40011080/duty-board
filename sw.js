@@ -2,7 +2,7 @@
 // 這裡採用「網路優先」策略：優先抓最新內容，只有離線時才用快取，
 // 避免大家看到舊的勤務資料。
 
-const CACHE_NAME = "duty-board-cache-v2";
+const CACHE_NAME = "duty-board-cache-v3";
 const APP_SHELL = [
   "./index.html",
   "./manifest.json",
@@ -40,7 +40,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    fetch(event.request)
+    // cache:'no-store'：連手機瀏覽器自己的 HTTP 快取也一起繞過。
+    // GitHub Pages 預設會叫瀏覽器把網頁快取約 10 分鐘，只寫 fetch(event.request)
+    // 的話，「網路優先」抓到的其實是這份 HTTP 快取的舊檔，看起來像沒更新。
+    fetch(event.request, { cache: "no-store" })
       .then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
