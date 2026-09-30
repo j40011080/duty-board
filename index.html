@@ -142,6 +142,8 @@
     background: var(--amber); font-weight:900; padding:2px 8px; border-radius:4px;
   }
   .now-head{ position:relative; display:flex; justify-content:flex-start; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px; min-height:32px; }
+  /* 多人值班不用絕對定位置中（會壓到左邊的時段文字），改成佔剩下的空間置中 */
+  .now-head .duty-person.duty-multi{ position:static; transform:none; max-width:none; flex:1 1 320px; justify-content:center; }
   .now-head .duty-person{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); max-width:min(80%,420px); justify-content:center; text-align:center; }
   /* 手機螢幕（寬度 <700px）：值班人員換行時，絕對定位置中會算錯高度導致
      文字偏移貼近左邊，改成正常排版方式——NOW 標籤在上，值班人員置中排在
@@ -184,6 +186,13 @@
   .duty-person .name.supervisor{ color: var(--supervisor); font-weight:700; }
   .duty-person{ font-size:.95rem; color: var(--text); display:inline-flex; align-items:baseline; gap:4px; flex-wrap:wrap; }
   .duty-person .duty-label{ }
+  /* 多人值班：「值班人員：」固定在左邊，人員清單在右邊自己換行，
+     換行後第二個人對齊第一個人的起點。 */
+  .duty-person.duty-multi{ flex-wrap:nowrap; align-items:baseline; }
+  .duty-person .duty-lead{ flex:0 0 auto; white-space:nowrap; }
+  .duty-person .duty-list{ display:flex; flex-wrap:wrap; column-gap:6px; row-gap:2px; align-items:baseline; text-align:left; min-width:0; }
+  .duty-item{ display:inline-flex; align-items:baseline; gap:4px; flex-wrap:wrap; }
+  .duty-item .duty-sep{ margin-left:-2px; }
   .duty-person b{ color:var(--amber); font-weight:700; font-family:'Chivo Mono',monospace; }
   .supervisor-line .duty-label{ color: var(--green); font-weight:900; }
   .now-head .duty-person{ font-size:clamp(1.2rem,3.2vw,1.6rem); font-weight:700; }
@@ -976,7 +985,15 @@ function dutyNums(o){
   return [o.onduty];
 }
 function dutyPeopleHtml(list, opts){
-  return (list||[]).map(n=>dutyPersonHtml(n, opts)).join('');
+  opts = opts || {};
+  list = (list||[]).filter(n=>n!==undefined && n!==null);
+  if(list.length <= 1) return list.length ? dutyPersonHtml(list[0], opts) : '';
+  // 2 人以上同時值班：只寫一次「值班人員：」，後面接「番號 姓名 房號、番號 姓名 房號」。
+  // 內層每個人用 .duty-item（不能再用 .duty-person，否則會吃到 NOW 標頭的絕對定位而疊在一起）。
+  // 一行放不下時，第二個人會換到下一行，並對齊第一個人的位置（不是縮回「值班人員」底下）。
+  const items = list.map((n,i)=>dutyPersonHtml(n, {...opts, item:true, trail: i<list.length-1})).join('');
+  const cls = ['duty-person','duty-multi']; if(opts.cls) cls.push(opts.cls);
+  return `<span class="${cls.join(' ')}"><span class="duty-lead">${esc(opts.label)}：</span><span class="duty-list">${items}</span></span>`;
 }
 
 function buildBlocks(){
@@ -1223,13 +1240,15 @@ function dutyPersonHtml(n, opts){
   const room = roomNumbers[n];
   const roomHtml = room ? `<span class="room-tag">${esc(room)}房</span>` : '';
   const titleHtml = (opts.showTitle && titles[n]) ? `${esc(titles[n])} ` : '';
-  const cls = ['duty-person']; if(opts.cls) cls.push(opts.cls);
+  const cls = [opts.item ? 'duty-item' : 'duty-person']; if(opts.cls) cls.push(opts.cls);
   // 跟 chip() 一樣：有帶車出去就顯示「🧰71車 出」標籤（並省略案件圖示），
   // 沒帶車才顯示案件圖示／❌。
   const outVehicle = assignedVehicleLabel(n);
   const outVehicleHtml = outVehicle ? `<span class="car-tag out-vehicle-tag">${esc(outVehicle)} 出</span>` : '';
   const outMark = outVehicle ? '' : outMarkHtml(n);
-  return `<span class="${cls.join(' ')}"><span class="duty-label">${esc(opts.label)}</span>：<b>${p.num}</b> ${titleHtml}<span class="${nameCls.join(' ')}">${p.name}</span>${roomHtml}${outMark}${outVehicleHtml}</span>`;
+  const labelHtml = opts.item ? '' : `<span class="duty-label">${esc(opts.label)}</span>：`;
+  const trailHtml = opts.trail ? '<span class="duty-sep">、</span>' : '';
+  return `<span class="${cls.join(' ')}">${labelHtml}<b>${p.num}</b> ${titleHtml}<span class="${nameCls.join(' ')}">${p.name}</span>${roomHtml}${outMark}${outVehicleHtml}${trailHtml}</span>`;
 }
 function chip(n, ord, opts){
   if(n===undefined || n===null) return '<span class="chip empty">—</span>';
