@@ -826,14 +826,16 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;
 const CAR_LABELS = ['11車','62車','瞄子手','瞄子手','91車','71車','31車'];
 function buildCarMap(list){
   const eligible = list.filter(n => n!==undefined && n!==null && !isConscript(n) && !isMarkedOut(n));
-  const map = {};
-  CAR_LABELS.forEach((label,i)=>{
-    if(eligible[i]===undefined) return;
-    // 「71車」「91車」這類標籤，如果那台車目前已經出勤／外出（還沒返隊），
-    // 就不再標給任何人，避免出現「71車已經出去了，卻又有人被標成71車」。
-    // 順位仍照原本算，只是這個標籤這段時間不顯示（返隊後自動恢復）。
+  // 已經出勤／外出（還沒返隊）的車，整個標籤直接從序列拿掉，後面的標籤往前補，
+  // 這樣「91車出去了」不會讓 71車、31車 沒人掛——在隊的隊員（非役男、沒被❌）
+  // 依序接下剩下的標籤。車返隊後標籤自動恢復原位。標籤比人多時，多的標籤空著。
+  const labels = CAR_LABELS.filter(label=>{
     const m = label.match(/^(\d+)車$/);
-    if(m && isVehicleOut(m[1])) return;
+    return !(m && isVehicleOut(m[1]));
+  });
+  const map = {};
+  labels.forEach((label,i)=>{
+    if(eligible[i]===undefined) return;
     map[eligible[i]] = label;
   });
   return map;
