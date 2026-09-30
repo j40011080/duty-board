@@ -937,10 +937,9 @@ function getAllPersonnelNums(){
 function P(n){ return { num:n, name:names[n]||"?", title:titles[n]||"隊員" }; }
 
 // ================= ROTATION: build the flat call-up order for each block =================
-// The 24 raw hourly rows are first collapsed into 16 display "blocks": the 14
+// The 24 raw hourly rows are first collapsed into 23 display "blocks": the 14
 // individual daytime hours (08-09 .. 21-22), one merged block for 22:00-00:00
-// (which repeats every hour) and one merged block for 00:00-08:00 (which also
-// repeats every hour). This mirrors how the unit actually reads the sheet and
+// (which repeats every hour) and eight hourly blocks for 00:00-08:00 (each read on its own row). This mirrors how the unit actually reads the sheet and
 // avoids re-counting the same duplicated hour twice.
 //
 // For each block: car1=(1,2), car2=(3,4) if both are present on that block's
@@ -969,12 +968,18 @@ function buildBlocks(){
       matches: h => h===22 || h===23
     });
   }
-  if(schedule.length >= 24){
+  // 00:00-08:00 不再合併成一個時段：一小時一個區間（00-01、01-02 … 07-08），
+  // 每個區間只讀自己那一列的(1)~(14)＋休息時間欄位，不跟其他小時混在一起
+  // （否則例如 02 點就下班的人、或 06-08 才有勤務的人，會因為合併而整段誤判）。
+  // 備勤順序的算法不變：一樣往前一個區間（00-01 之前就是 22:00–00:00，再往上
+  // 一路看到 08-09）沿用前面的第一台車＋第二台車人員。
+  for(let i=16;i<24 && i<schedule.length;i++){
     blocks.push({
-      label:"00:00–08:00", hourStart:0, onduty:schedule[16].onduty,
-      pos: mergeRowPositions(schedule.slice(16,24)),
-      inspectList: schedule[16].inspectList, waterList: schedule[16].waterList, otherList: schedule[16].otherList,
-      matches: h => h>=0 && h<=7
+      label: fmtRange(schedule[i].s, schedule[i].e), hourStart: schedule[i].s,
+      onduty: schedule[i].onduty, inspect: schedule[i].inspect,
+      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList,
+      training: schedule[i].training, note: schedule[i].note, pos: schedule[i].pos,
+      matches: h => h === schedule[i].s
     });
   }
   return blocks;
@@ -2267,7 +2272,7 @@ document.getElementById('fileInput').addEventListener('change', function(e){
       document.getElementById('importMsg').textContent =
         `匯入成功：解析出 ${result.schedule.length} 個時段、${Object.keys(result.names).length} 位人員。` +
         `消防查察／水源查察／其他勤務欄位中出現的人員，該時段將自動排除於備勤名單之外。` +
-        `22:00–00:00 與 00:00–08:00 兩個夜間合併時段已改為直接讀取該時段本身跨小時彙整後的備勤順序。` +
+        `22:00–00:00 為合併時段；00:00–08:00 已拆成每小時一個區間，各自讀取該小時的備勤順序。` +
         `每次開啟本頁都需要重新匯入 Excel 勤務表（本頁不會記住上次的檔案）。`;
       document.getElementById('importMsg').className = 'importmsg ok';
       renderAll();
