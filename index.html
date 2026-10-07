@@ -217,7 +217,12 @@
   .other-duty{ margin-top:10px; font-size:.87rem; color: var(--dim2); }
   .other-duty .people{ margin-top:4px; }
   .other-groups{ display:flex; flex-wrap:wrap; gap:0 18px; align-items:flex-start; }
-  .other-groups .other-duty{ flex:0 1 auto; max-width:100%; }
+  /* 同一組一起出去的人，用一個細框框起來 */
+  .other-groups .other-duty{
+    flex:0 1 auto; max-width:100%; margin-top:10px;
+    border:1px solid #ffffff26; border-radius:8px; background:#00000022;
+    padding:6px 10px 8px;
+  }
   .other-duty .other-title{ overflow-wrap:anywhere; }
   .note{ margin-top:10px; font-size:.82rem; color:var(--dim2); line-height:1.6;}
 
@@ -1054,7 +1059,7 @@ function mergeRowPositions(rows){
 function isEligibleCar(v, used){
   // 當日主管可以編進車組（例如表上 (3)(4) 有寫主管番號就照表上排），
   // 所以這裡不再排除 supervisorNum。（備勤名單仍不列主管，他在「當日主管」那一行。）
-  return v!==undefined && v!==null && !DRIVER_NUMS.has(v) && !used.has(v);
+  return v!==undefined && v!==null && !DRIVER_NUMS.has(v) && !isConscript(v) && !used.has(v);
 }
 
 // "Can this person be slotted into standby (備勤) right now": not already
@@ -1182,6 +1187,9 @@ function getDisplayGroups(){
     inspect: b.inspect, inspectList: b.inspectList, waterList: b.waterList, otherList: b.otherList, otherGroups: b.otherGroups,
     training: b.training, note: b.note,
     flat: buildFlatForBlock(blocks, i, carsCache),
+    // 第一台車、第二台車實際有幾個人。車組人數不足 2 人時（例如其他勤務拉走太多人），
+    // 不能再照「前2個＝車1、第3~4個＝車2」硬切，否則備勤的人（例如役男）會被切進車組。
+    n1: carsCache[i].car1.length, n2: carsCache[i].car2.length,
     matches: b.matches
   }));
 }
@@ -1305,9 +1313,11 @@ function chipsWithRank(arr, startRank, opts){
 
 function renderPeopleBlock(group){
   const list = applyOverrides(group.flat);
-  const car1 = list.slice(0,2);
-  const car2 = list.slice(2,4);
-  const standby = list.slice(4);
+  const n1 = (group.n1===undefined) ? 2 : group.n1;
+  const n2 = (group.n2===undefined) ? 2 : group.n2;
+  const car1 = list.slice(0,n1);
+  const car2 = list.slice(n1,n1+n2);
+  const standby = list.slice(n1+n2);
   const carMap = buildCarMap(list);
 
   let html = '<div class="cars-grid">';
@@ -2237,7 +2247,8 @@ function openDispatchPicker(type, useAll){
     const now = new Date();
     const groups = getDisplayGroups();
     const gi = getCurrentGroupIndex(now);
-    const curFlat = applyOverrides((groups[gi] || groups[0]).flat);
+    const curGroup = groups[gi] || groups[0];
+    const curFlat = applyOverrides(curGroup.flat).slice(0, curGroup.n1===undefined ? 2 : curGroup.n1);
     defaultChecked = new Set(curFlat.filter(n=>!isMarkedOut(n)).slice(0,2));
   }
 
