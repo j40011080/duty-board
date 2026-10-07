@@ -216,6 +216,9 @@
   }
   .other-duty{ margin-top:10px; font-size:.87rem; color: var(--dim2); }
   .other-duty .people{ margin-top:4px; }
+  .other-groups{ display:flex; flex-wrap:wrap; gap:0 18px; align-items:flex-start; }
+  .other-groups .other-duty{ flex:0 1 auto; max-width:100%; }
+  .other-duty .other-title{ overflow-wrap:anywhere; }
   .note{ margin-top:10px; font-size:.82rem; color:var(--dim2); line-height:1.6;}
 
   .list-head{ font-size:.85rem; color:var(--dim2); margin: 26px 0 8px; letter-spacing:1px;}
@@ -1002,7 +1005,7 @@ function buildBlocks(){
     blocks.push({
       label: fmtRange(schedule[i].s, schedule[i].e), hourStart: schedule[i].s,
       onduty: schedule[i].onduty, dutyList: schedule[i].dutyList, inspect: schedule[i].inspect,
-      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList,
+      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList, otherGroups: schedule[i].otherGroups,
       training: schedule[i].training, note: schedule[i].note, pos: schedule[i].pos,
       matches: h => h === schedule[i].s
     });
@@ -1010,7 +1013,7 @@ function buildBlocks(){
   if(schedule.length >= 16){
     blocks.push({
       label:"22:00–00:00", hourStart:22, onduty:schedule[14].onduty, dutyList:schedule[14].dutyList,
-      inspectList: schedule[14].inspectList, waterList: schedule[14].waterList, otherList: schedule[14].otherList,
+      inspectList: schedule[14].inspectList, waterList: schedule[14].waterList, otherList: schedule[14].otherList, otherGroups: schedule[14].otherGroups,
       note:schedule[14].note, pos: mergeRowPositions([schedule[14], schedule[15]]),
       matches: h => h===22 || h===23
     });
@@ -1024,7 +1027,7 @@ function buildBlocks(){
     blocks.push({
       label: fmtRange(schedule[i].s, schedule[i].e), hourStart: schedule[i].s,
       onduty: schedule[i].onduty, dutyList: schedule[i].dutyList, inspect: schedule[i].inspect,
-      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList,
+      inspectList: schedule[i].inspectList, waterList: schedule[i].waterList, otherList: schedule[i].otherList, otherGroups: schedule[i].otherGroups,
       training: schedule[i].training, note: schedule[i].note, pos: schedule[i].pos,
       matches: h => h === schedule[i].s
     });
@@ -1110,7 +1113,7 @@ function computeCarsCache(blocks){
       : (cur.inspect!==undefined ? [cur.inspect] : []);
     inspectNums.forEach(v=>used.add(v));
     (cur.waterList||[]).forEach(v=>used.add(v));
-    (cur.otherList||[]).forEach(v=>used.add(v));
+    otherGroupsOf(cur).forEach(g=>g.persons.forEach(v=>used.add(v)));
     activeOtherDuty(cur.hourStart).forEach(g=> g.persons.forEach(v=>used.add(v)));
 
     const car1 = [cur.pos[1], cur.pos[2]].filter(v=>isEligibleCar(v, used));
@@ -1176,7 +1179,7 @@ function getDisplayGroups(){
   const carsCache = computeCarsCache(blocks);
   return blocks.map((b,i)=>({
     label: b.label, hourStart: b.hourStart, onduty: b.onduty, dutyList: dutyNums(b),
-    inspect: b.inspect, inspectList: b.inspectList, waterList: b.waterList, otherList: b.otherList,
+    inspect: b.inspect, inspectList: b.inspectList, waterList: b.waterList, otherList: b.otherList, otherGroups: b.otherGroups,
     training: b.training, note: b.note,
     flat: buildFlatForBlock(blocks, i, carsCache),
     matches: b.matches
@@ -1207,6 +1210,19 @@ function applyOverrides(flat){
   // 出勤標記（tempOut）不再從名單移除或造成後面順位遞補，只在 chip() 裡加上❌
   // 標記，人員仍留在原本的位置／順位上。
   return list;
+}
+
+// 取得這個時段的其他勤務分組。舊資料（雲端裡已存的、沒有 otherGroups 的）退回
+// 只有 otherList 的格式，並就地把「14.84」這種小數拆成 14 和 84。
+function otherGroupsOf(o){
+  if(o.otherGroups && o.otherGroups.length) return o.otherGroups;
+  if(!(o.otherList && o.otherList.length)) return [];
+  const flat = [];
+  o.otherList.forEach(v=>{
+    if(Number.isInteger(Number(v))) flat.push(Number(v));
+    else String(v).split(/[.\s、,，\/]+/).map(Number).filter(n=>!isNaN(n)).forEach(n=>flat.push(n));
+  });
+  return flat.length ? [{persons:flat, desc:''}] : [];
 }
 
 function activeOtherDuty(hourStart){
@@ -1304,8 +1320,12 @@ function renderPeopleBlock(group){
   if(od.length){
     html += od.map(g=>`<div class="other-duty">外勤人員（${g.label}）<div class="people">${chipsWithRank(g.persons,1,{away:true})}</div></div>`).join('');
   }
-  if(group.otherList && group.otherList.length){
-    html += `<div class="other-duty">其他勤務（匯入資料）<div class="people">${chipsWithRank(group.otherList,1,{away:true})}</div></div>`;
+  const og = otherGroupsOf(group);
+  if(og.length){
+    // 每一組（一起出去的人）一個方框，並排；有說明就顯示在標題後面
+    html += `<div class="other-groups">` + og.map(g=>
+      `<div class="other-duty"><div class="other-title">其他勤務${g.desc ? '：'+esc(g.desc) : '（匯入資料）'}</div><div class="people">${g.persons.map(n=>chip(n,null,{away:true})).join('')}</div></div>`
+    ).join('') + `</div>`;
   }
 
   let extras = [];
@@ -2442,6 +2462,60 @@ function extractRosterNums(aoa){
   return null;
 }
 
+// ---- 其他勤務（附記）解析與合併 ----
+// 把「第8時」「第02時」換算成以 08:00 為一天起點的連續小時（08→8 … 07→31），
+// 這樣 22-02 這種跨午夜的時間範圍也能正確比對。
+function dayHour(h){ return h>=8 ? h : h+24; }
+function hourInNote(hourStart, g){
+  const ns = dayHour(g.start);
+  let ne = g.end; while(ne<=ns) ne += 24;
+  const hn = dayHour(hourStart);
+  return hn>=ns && hn<ne;
+}
+// 把附記的長說明縮成關鍵字，最多 10 個字：
+//  取第一句第一段 → 拿掉「期間、加強、實施…」這類贅詞 → 遇到「和／及／與／並」只留前半
+//  → 還是超過 10 個字就截成 9 字加「…」。
+function shortenDesc(d){
+  d = (d||'').split(/[。\n]/)[0].split(/[，,]/)[0];
+  d = d.replace(/【[^】]*】/g,'').replace(/期間|加強|實施|辦理|進行|今日|本日|減少燃放|雙十/g,'');
+  d = d.split(/[和及與並]/)[0].trim();
+  const a = Array.from(d);
+  return a.length>10 ? a.slice(0,9).join('')+'…' : d;
+}
+// 掃整張表所有文字格，找「其他勤務：8-17時，（出勤）番號8.17.19.3，說明」。
+function parseOtherDutyNotes(aoa){
+  const out = [];
+  const re = /其他勤務[：:]\s*(\d{1,2})\s*[-~－–—～]\s*(\d{1,2})\s*時?[，,、\s]*(?:出勤)?(?:番號)?[：:\s]*(\d{1,2}(?:[.、]\d{1,2})*)\s*(?:[，,。]\s*([^]*))?/;
+  for(const row of aoa){
+    for(const cell of (row||[])){
+      if(typeof cell!=='string' || !cell.includes('其他勤務')) continue;
+      cell.split(/(?=其他勤務[：:])/).forEach(seg=>{
+        const m = seg.match(re);
+        if(!m) return;
+        const persons = m[3].split(/[.、]/).map(Number).filter(n=>!isNaN(n));
+        if(!persons.length) return;
+        let desc = (m[4]||'').trim();
+        desc = shortenDesc(desc);
+        out.push({ start:Number(m[1]), end:Number(m[2]), persons:[...new Set(persons)], desc });
+      });
+    }
+  }
+  return out;
+}
+// 合併某一個小時的「欄位內容」與「附記」：
+//  1. 附記裡涵蓋這個小時的每一組，各自成為一組（一起出去的人放同一組）。
+//  2. 欄位裡每一格若跟某個附記組有交集 → 併進那一組（補上附記漏掉的人）；
+//     沒有交集 → 自己成為一組（附記漏寫的外勤）。
+function mergeOtherGroups(cellGroups, noteGroups, hourStart){
+  const groups = (noteGroups||[]).filter(g=>hourInNote(hourStart,g)).map(g=>({persons:[...g.persons], desc:g.desc}));
+  (cellGroups||[]).forEach(cg=>{
+    const hit = groups.find(g=>cg.some(n=>g.persons.includes(n)));
+    if(hit){ cg.forEach(n=>{ if(!hit.persons.includes(n)) hit.persons.push(n); }); }
+    else groups.push({persons:[...cg], desc:''});
+  });
+  return groups;
+}
+
 // Parses a sheet matching the source duty-roster layout: column 0 = time range
 // ("08-09"), a header row containing "(1)".."(14)" marks the 備勤 grid, and a
 // roster table with 編號/服勤人員 columns.
@@ -2505,25 +2579,35 @@ function parseScheduleAOA(aoa){
     labelRanges[cur.lab] = [cur.col, nextCol];
   });
 
-  function readNumsInRange(row, range){
+  // 讀一段欄位範圍，回傳「每一格一組」的番號陣列（二維）。
+  // 同一格內可能有多個番號：以換行／空白分隔（"17\n18"），或用小數點相連
+  // （"14.84" ＝ 14番與84番一起出去，Excel 會把它存成小數 14.84）。
+  // 都要逐一拆開，不能把 "17\n18" 去掉換行變成 1718，也不能把 14.84 當一個數字。
+  function readGroupsInRange(row, range){
     if(!range) return [];
     const [start,end] = range;
     const out = [];
     for(let c=start;c<end;c++){
       const v = row[c];
       if(v===undefined||v===null||v==='') continue;
-      // 同一格內可能是合併儲存格，內容以換行/空白分隔多個番號（例如
-      // "17\n18" 代表兩個人整段時間都在同一項勤務），必須逐一拆開解析，
-      // 不能把換行去掉後直接當成一個數字（那樣 "17\n18" 會變成 1718）。
       const cleaned = String(v).replace(/[【】\[\]]/g,'');
-      cleaned.split(/\s+/).forEach(part=>{
+      const g = [];
+      cleaned.split(/[.\s、,，\/]+/).forEach(part=>{
         if(!part) return;
         const n = Number(part);
-        if(!isNaN(n)) out.push(n);
+        if(!isNaN(n)) g.push(n);
       });
+      if(g.length) out.push(g);
     }
     return out;
   }
+  function readNumsInRange(row, range){
+    return [].concat(...readGroupsInRange(row, range));
+  }
+  // 附記欄裡的「其他勤務：8-17時，番號8.17.19.3，SURVIVAL訓練。」這類說明，
+  // 才是「誰跟誰一起、從幾點到幾點」的完整依據（每個時段上面的欄位常常漏打或漏號碼），
+  // 所以兩邊都讀，再合併。
+  const noteGroups = parseOtherDutyNotes(aoa);
 
   const schedule = [];
   for(let r=headerRow+1; r<aoa.length; r++){
@@ -2572,8 +2656,12 @@ function parseScheduleAOA(aoa){
     if(inspectList.length){ entry.inspectList = inspectList; entry.inspect = inspectList[0]; }
     const waterList = readNumsInRange(row, labelRanges['水源查察']);
     if(waterList.length) entry.waterList = waterList;
-    const otherList = readNumsInRange(row, labelRanges['其他勤務']);
-    if(otherList.length) entry.otherList = otherList;
+    const cellGroups = readGroupsInRange(row, labelRanges['其他勤務']);
+    const otherGroups = mergeOtherGroups(cellGroups, noteGroups, entry.s);
+    if(otherGroups.length){
+      entry.otherGroups = otherGroups;
+      entry.otherList = [...new Set([].concat(...otherGroups.map(g=>g.persons)))];
+    }
     if(trainingCol>=0 && row[trainingCol]) entry.training = String(row[trainingCol]).trim();
     schedule.push(entry);
   }
