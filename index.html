@@ -2496,7 +2496,11 @@ function parseOtherDutyNotes(aoa){
         if(!persons.length) return;
         let desc = (m[4]||'').trim();
         desc = shortenDesc(desc);
-        out.push({ start:Number(m[1]), end:Number(m[2]), persons:[...new Set(persons)], desc });
+        // 合併儲存格會被 fillMergedCells 把同一段文字複製到範圍內的每一格，
+        // 所以同一條附記會被讀到幾十次，必須去重，否則畫面會重複幾十組。
+        const key = m[1]+'-'+m[2]+'-'+[...new Set(persons)].sort((x,y)=>x-y).join('.');
+        if(out.some(o=>o.key===key)) return;
+        out.push({ key, start:Number(m[1]), end:Number(m[2]), persons:[...new Set(persons)], desc });
       });
     }
   }
@@ -2513,7 +2517,13 @@ function mergeOtherGroups(cellGroups, noteGroups, hourStart){
     if(hit){ cg.forEach(n=>{ if(!hit.persons.includes(n)) hit.persons.push(n); }); }
     else groups.push({persons:[...cg], desc:''});
   });
-  return groups;
+  // 最後再保險去重：同一批人（不管順序）只留一組。
+  const seen = new Set();
+  return groups.filter(g=>{
+    const k = [...g.persons].sort((x,y)=>x-y).join('.');
+    if(seen.has(k)) return false;
+    seen.add(k); return true;
+  });
 }
 
 // Parses a sheet matching the source duty-roster layout: column 0 = time range
